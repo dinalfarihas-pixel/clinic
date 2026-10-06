@@ -39,8 +39,16 @@ export const menu = [
           { label: 'Resep Masuk', to: '/farmasi/resep' },
           { label: 'Stok Obat', to: '/farmasi/stok' },
           { label: 'Surat Pesanan Obat', to: '/farmasi/pesanan' },
-          { label: 'Penerimaan Barang', to: '/farmasi/penerimaan' },
-          { label: 'Penjualan Langsung', to: '/farmasi/penjualan' }
+          { label: 'Penerimaan Barang', to: '/farmasi/penerimaan' }
+        ]
+      },
+      {
+        label: 'Penjualan Apotek',
+        icon: 'pi pi-shopping-cart',
+        items: [
+          { label: 'Kasir Penjualan', to: '/penjualan', exact: true },
+          { label: 'Riwayat Penjualan', to: '/penjualan/riwayat' },
+          { label: 'Kas Lain', to: '/penjualan/kas-lain' }
         ]
       },
       { label: 'Kasir', icon: 'pi pi-wallet', to: '/kasir' },

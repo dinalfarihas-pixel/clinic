@@ -14,7 +14,8 @@ const layout = useLayoutStore()
 const hasChildren = computed(() => Array.isArray(props.item.items) && props.item.items.length > 0)
 
 function containsRoute(item, path) {
-  if (item.to && (path === item.to || (item.to !== '/' && path.startsWith(item.to + '/')))) return true
+  // `exact`: hanya aktif di path persis (untuk item yang path-nya induk dari item lain di menu)
+  if (item.to && (path === item.to || (!item.exact && item.to !== '/' && path.startsWith(item.to + '/')))) return true
   return (item.items || []).some((child) => containsRoute(child, path))
 }
 

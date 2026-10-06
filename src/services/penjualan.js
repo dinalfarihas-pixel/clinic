@@ -102,17 +102,115 @@ export async function checkoutPenjualan(payload) {
   return res.response
 }
 
-/** Transaksi terakhir di lokasi ini (recent_sales), opsional cuma di satu shift. */
-export async function getRecentSales(idShift) {
-  const params = { lokasiId: getIdLokasi(), limit: 20 }
+// ── Riwayat & laporan (SalesLangsung, M_sales_langsung) ──────────
+const SL = '/index.php/api/SalesLangsung'
+const list = (res) => (Array.isArray(res?.response) ? res.response : [])
+
+/**
+ * Transaksi terakhir di lokasi ini (recent_sales, maks. 200), opsional cuma di satu shift.
+ * Satu baris per item; header struk (GRANDTOTAL, POTONGAN, TOTALBAYAR, KEMBALIAN, IDPAYEMENT,
+ * SISA_GRANDTOTAL) diulang di tiap baris. BATAL='1' = item sudah di-void. QTY dalam satuan kecil.
+ */
+export async function getRecentSales(idShift, limit = 20) {
+  const params = { lokasiId: getIdLokasi(), limit }
   if (idShift) params.idShift = idShift
-  const res = await apotik.get('/index.php/api/SalesLangsung/recent_sales', params)
-  return Array.isArray(res?.response) ? res.response : []
+  return list(await apotik.get(`${SL}/recent_sales`, params))
 }
 
 /** Batalkan (void) seluruh transaksi — stok semua item di dalamnya dikembalikan. */
 export async function voidTransaksi(receiptNo) {
-  const res = await apotik.post('/index.php/api/SalesLangsung/void', {}, { RECEIPT_NO: receiptNo, IDCLIENT: getIdClient() })
+  const res = await apotik.post(`${SL}/void`, {}, { RECEIPT_NO: receiptNo, IDCLIENT: getIdClient() })
   const code = String(res?.metadata?.code)
   if (code !== '200') throw new Error(res?.metadata?.message || 'Gagal membatalkan transaksi')
+}
+
+/** Batalkan satu item saja dari struk (stok item itu dikembalikan). */
+export async function voidItem(receiptNo, idDetail) {
+  const res = await apotik.post(`${SL}/void_item`, {}, { RECEIPT_NO: receiptNo, ID_DETAIL: idDetail, IDCLIENT: getIdClient() })
+  if (String(res?.metadata?.code) !== '200') throw new Error(res?.metadata?.message || 'Gagal membatalkan item')
+}
+
+// f.lokasi: id lokasi (default lokasi login); 0/'' = tanpa lokasiId = gabungan semua lokasi (endpoint laporan saja; lainnya tetap wajib lokasiId)
+// f.penjamin: kode m_carabayar, kosong = semua penjamin (hanya 5 endpoint laporan)
+const periode = (dateStart, dateEnd, { lokasi = getIdLokasi(), penjamin } = {}) => ({
+  ...(lokasi ? { lokasiId: lokasi } : {}),
+  ...(penjamin ? { penjamin } : {}),
+  dateStart,
+  dateEnd
+})
+
+/** Penjamin untuk dropdown filter laporan. Item: KODE (1 = UMUM), NAMA. */
+export async function getListPenjamin() {
+  return list(await apotik.get(`${SL}/penjamin`, {}))
+}
+
+/** Semua lokasi client ini untuk filter laporan (get_list_stock_lokasi_v2 mode=1). Item: ID, DISPLAY, JENIS_LOKASI, dst. */
+export async function getListLokasi() {
+  const res = await apotik.post(`/index.php/api/Data_referensi/get_list_stock_lokasi_v2/${getIdClient()}/${getIdLokasi() || 0}/1`, {})
+  return list(res)
+}
+
+/** Angka ringkasan periode: OMSET_PENJUALAN (= OMSET_TINDAKAN + OMSET_BARANG), NILAI_REFUND, TOTAL_TUNAI, TOTAL_NONTUNAI, TOTAL_PIUTANG_BARU (ketiganya null kalau f.penjamin bukan UMUM), JUMLAH_TRANSAKSI, dst. */
+export async function getRingkasanKas(dateStart, dateEnd, f) {
+  const res = await apotik.get(`${SL}/ringkasan_kas`, periode(dateStart, dateEnd, f))
+  return res?.response ?? {}
+}
+
+/** Omzet per KATEGORI. Item: KATEGORI, JENIS (TINDAKAN|BARANG), JUMLAH_ITEM, TOTAL_QTY, TOTAL_NILAI (kotor; baris 'POTONGAN STRUK' negatif supaya SUM per JENIS = OMSET_TINDAKAN/OMSET_BARANG). */
+export async function getRingkasanKategori(dateStart, dateEnd, f) {
+  return list(await apotik.get(`${SL}/ringkasan_kategori`, periode(dateStart, dateEnd, f)))
+}
+
+/** Rekap per periode (groupBy: day | week | month | year). */
+export async function getRingkasanHarian(dateStart, dateEnd, groupBy = 'day', f) {
+  return list(await apotik.get(`${SL}/ringkasan_harian`, { ...periode(dateStart, dateEnd, f), groupBy }))
+}
+
+/** Barang terlaris (sortBy: qty | nilai). */
+export async function getTopSelling(dateStart, dateEnd, sortBy = 'qty', limit = 20, f) {
+  return list(await apotik.get(`${SL}/top_selling`, { ...periode(dateStart, dateEnd, f), sortBy, limit }))
+}
+
+/** Riwayat shift kasir di rentang tanggal. */
+export async function getRiwayatShift(dateStart, dateEnd, lokasi) {
+  return list(await apotik.get(`${SL}/riwayat_shift`, { ...periode(dateStart, dateEnd, { lokasi }), limit: 100 }))
+}
+
+// ── Kas lain: pemasukan/pengeluaran di luar penjualan (mis. gaji, listrik, setoran) ──
+const cek = (res, pesan) => {
+  if (String(res?.metadata?.code) !== '200') throw new Error(res?.metadata?.message || pesan)
+  return res.response
+}
+
+/** Master kategori; JENIS: PEMASUKAN | PENGELUARAN, TIPE = induk/grup (mis. BIAYA OPERASIONAL). */
+export async function getKategoriLain(jenis) {
+  return list(await apotik.get(`${SL}/kategori_transaksi_lain`, { jenis }))
+}
+export async function simpanKategoriLain({ ID, NAMA, JENIS, TIPE }) {
+  return cek(await apotik.post(`${SL}/kategori_transaksi_lain`, {}, { IDCLIENT: getIdClient(), ID, NAMA, JENIS, TIPE }), 'Gagal menyimpan kategori')
+}
+export async function hapusKategoriLain(id) {
+  return cek(await apotik.post(`${SL}/kategori_transaksi_lain_hapus`, {}, { ID: id, IDCLIENT: getIdClient() }), 'Gagal menghapus kategori')
+}
+
+/** Entri kas lain di rentang tanggal (opsional filter jenis). */
+export async function getTransaksiLain(dateStart, dateEnd, jenis) {
+  return list(await apotik.get(`${SL}/transaksi_lain`, { ...periode(dateStart, dateEnd), jenis }))
+}
+export async function simpanTransaksiLain({ idKategori, tanggal, jumlah, keterangan }) {
+  return cek(
+    await apotik.post(`${SL}/transaksi_lain`, {}, {
+      IDCLIENT: getIdClient(),
+      ID_LOKASI: getIdLokasi(),
+      ID_KATEGORI: idKategori,
+      TANGGAL: tanggal,
+      JUMLAH: jumlah,
+      KETERANGAN: keterangan || '',
+      IDUSER: getUserId()
+    }),
+    'Gagal menyimpan transaksi'
+  )
+}
+export async function hapusTransaksiLain(id) {
+  return cek(await apotik.post(`${SL}/transaksi_lain_hapus`, {}, { ID: id, IDCLIENT: getIdClient() }), 'Gagal menghapus transaksi')
 }
