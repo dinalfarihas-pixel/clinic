@@ -65,7 +65,8 @@ export const menu = [
           { label: 'Dokter', to: '/master/dokter' },
           { label: 'Poliklinik', to: '/master/poli' },
           { label: 'Tindakan & Tarif', to: '/master/tarif' },
-          { label: 'Supplier', to: '/master/supplier' }
+          { label: 'Supplier', to: '/master/supplier' },
+          { label: 'Migrasi Barang & Stok', to: '/master/migrasi-barang' }
         ]
       },
       { label: 'Pengguna', icon: 'pi pi-users', to: '/pengguna' },

@@ -27,6 +27,7 @@ const routes = [
       { path: 'laboratorium', name: 'laboratorium', component: Placeholder, meta: { title: 'Laboratorium', breadcrumb: ['Pelayanan', 'Laboratorium'] } },
       { path: 'farmasi/resep', name: 'farmasi-resep', component: () => import('@/views/farmasi/ResepMasukView.vue'), meta: { title: 'Resep Masuk', breadcrumb: ['Farmasi', 'Resep Masuk'] } },
       { path: 'farmasi/resep/:trans/proses', name: 'farmasi-resep-proses', component: () => import('@/views/farmasi/ProsesResepView.vue'), meta: { title: 'Proses Resep', breadcrumb: ['Farmasi', 'Resep Masuk', 'Proses'] } },
+      { path: 'master/migrasi-barang', name: 'master-migrasi-barang', component: () => import('@/views/master/MigrasiBarangView.vue'), meta: { title: 'Migrasi Barang & Stok', breadcrumb: ['Master Data', 'Migrasi Barang & Stok'] } },
       { path: 'farmasi/stok', name: 'farmasi-stok', component: () => import('@/views/farmasi/StokObatView.vue'), meta: { title: 'Stok Obat', breadcrumb: ['Farmasi', 'Stok Obat'] } },
       { path: 'farmasi/pesanan', name: 'farmasi-pesanan', component: () => import('@/views/farmasi/PemesananView.vue'), meta: { title: 'Surat Pesanan Obat', breadcrumb: ['Farmasi', 'Surat Pesanan Obat'] } },
       { path: 'farmasi/pesanan/baru', name: 'farmasi-pesanan-baru', component: () => import('@/views/farmasi/PemesananFormView.vue'), meta: { title: 'Tambah Surat Pesanan', breadcrumb: ['Farmasi', 'Surat Pesanan Obat', 'Tambah'] } },
