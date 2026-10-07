@@ -66,16 +66,56 @@ export async function tambahGrouping(namaGroup) {
  * ISKRONIS, ISKONSINYASI, KLASIFIKASI_OBAT, GOLONGAN, CATATAN, ARSIPKAN, TOTAL_STOCK,
  * TOTAL_PERSEDIAAN, is_below_minimum.
  */
-export async function getDaftarObat() {
+export async function getDaftarObat(arsipkan = '0') {
   const res = await apotik.get('/index.php/api/inventory/barang_list', {
     lokasiId: getIdLokasi(),
     jenis: 'OBAT',
     limit: 1000,
     sortField: 'NAMA',
-    sortOrder: 'ASC'
+    sortOrder: 'ASC',
+    ARSIPKAN: arsipkan // '0' aktif, '1' diarsipkan, '' semua
   })
 
   return Array.isArray(res?.response) ? res.response : []
+}
+
+// PUT tanpa body ke endpoint arsip/aktif — semuanya pola sama.
+async function putStatus(path, id, pesanGagal) {
+  const res = await apotik.put(`/index.php/api/inventory/${path}/${id}`, { lokasiId: getIdLokasi() }, {})
+  if (String(res?.metadata?.code) !== '200') throw new Error(res?.metadata?.message || pesanGagal)
+}
+export const arsipkanObat = (id) => putStatus('barang_arsip', id, 'Gagal mengarsipkan obat')
+export const aktifkanObat = (id) => putStatus('barang_aktif', id, 'Gagal mengaktifkan obat')
+export const arsipkanBatch = (id) => putStatus('batch_arsip', id, 'Gagal mengarsipkan batch')
+export const aktifkanBatch = (id) => putStatus('batch_aktif', id, 'Gagal mengaktifkan batch')
+
+/**
+ * ID obat yang punya batch akan expired dalam `months` bulan ke depan (barang_akan_expired).
+ * Mengembalikan Set BARANG_ID — dipakai untuk menyaring daftar obat di client.
+ */
+export async function getIdObatAkanExpired(months) {
+  const res = await apotik.get('/index.php/api/inventory/barang_akan_expired', {
+    lokasiId: getIdLokasi(),
+    jenis: 'OBAT',
+    months,
+    limit: 1000
+  })
+  return new Set((Array.isArray(res?.response) ? res.response : []).map((r) => Number(r.BARANG_ID)))
+}
+
+/**
+ * Kartu stok obat (barang_stock_card/:id). `dateMin`/`dateMax` format YYYY-MM-DD.
+ * Mengembalikan { barang, date_min, date_max, rows }; QTY dalam satuan kecil,
+ * JENIS_TRANS IN/OUT (+ SALES/REFUND lama), SALDO = saldo barang di lokasi.
+ */
+export async function getKartuStok(idBarang, dateMin, dateMax) {
+  const res = await apotik.get(`/index.php/api/inventory/barang_stock_card/${idBarang}`, {
+    lokasiId: getIdLokasi(),
+    DATE_MIN: dateMin,
+    DATE_MAX: dateMax
+  })
+  if (String(res?.metadata?.code) !== '200') throw new Error(res?.metadata?.message || 'Gagal memuat kartu stok')
+  return res.response
 }
 
 /** Tambah obat (barang_create). Ditolak jika lokasi yang login bukan gudang induk. */
@@ -184,6 +224,19 @@ export async function tambahBatchObat(idBarang, batch) {
   const code = String(res?.metadata?.code)
   if (code !== '200') throw new Error(res?.metadata?.message || 'Gagal menambah batch')
   return res.response?.SUB_BARCODE || null
+}
+
+/**
+ * Tambah qty ke batch yang sudah ada (batch_tambah_stok/:id), tercatat di kartu stok sebagai
+ * "TAMBAH STOK MANUAL". `satuan` default satuan kecil. Mengembalikan QTY_BARU (satuan kecil).
+ */
+export async function tambahStokBatch(batchId, { qty, satuan, catatan }) {
+  const payload = { QTY: Number(qty) || 0 }
+  if (satuan) payload.SATUAN = satuan
+  if (catatan) payload.CATATAN = catatan
+  const res = await apotik.put(`/index.php/api/inventory/batch_tambah_stok/${batchId}`, {}, payload)
+  if (String(res?.metadata?.code) !== '200') throw new Error(res?.metadata?.message || 'Gagal menambah stok')
+  return res.response?.QTY_BARU ?? null
 }
 
 // bucket OBAT_BMHP: dijual ke pasien & motong stok saat transaksi (lihat bucketRule di BarangFormModal)

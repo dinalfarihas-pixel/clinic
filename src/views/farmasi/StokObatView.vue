@@ -14,6 +14,12 @@ import {
   getDaftarRak,
   tambahRak,
   updateBatchRak,
+  tambahStokBatch,
+  arsipkanObat,
+  aktifkanObat,
+  arsipkanBatch,
+  aktifkanBatch,
+  getIdObatAkanExpired,
   getKategoriObat,
   getKlasifikasiObat,
   getBentukSediaan,
@@ -23,6 +29,7 @@ import {
   GOLONGAN_OBAT
 } from '@/services/obat'
 import { toYmd } from '@/utils/tanggal'
+import KartuStokDialog from './components/KartuStokDialog.vue'
 
 const toast = useToast()
 const confirm = useConfirm()
@@ -285,6 +292,40 @@ async function simpanBatch() {
   }
 }
 
+// ── Tambah stok ke batch yang sudah ada ──────────────────────
+const showTambahStok = ref(false)
+const savingStok = ref(false)
+const errorStok = ref('')
+const stokTarget = ref({ obat: null, batch: null })
+const formStok = ref({ qty: null, satuan: null, catatan: '' })
+
+function bukaTambahStok(o, b) {
+  stokTarget.value = { obat: o, batch: b }
+  formStok.value = { qty: null, satuan: o.SATUAN_KECIL, catatan: '' }
+  errorStok.value = ''
+  showTambahStok.value = true
+}
+
+async function simpanTambahStok() {
+  const f = formStok.value
+  if (!f.qty || f.qty <= 0) {
+    errorStok.value = 'Qty wajib diisi, lebih dari 0'
+    return
+  }
+  savingStok.value = true
+  try {
+    const { obat: o, batch: b } = stokTarget.value
+    await tambahStokBatch(b.ID, { qty: f.qty, satuan: f.satuan, catatan: f.catatan.trim() })
+    toast.add({ severity: 'success', summary: 'Stok ditambahkan', detail: o.NAMA, life: 3500 })
+    showTambahStok.value = false
+    await Promise.all([muatBatch(o.ID), muatObat()])
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Gagal menambah stok', detail: err.message, life: 5000 })
+  } finally {
+    savingStok.value = false
+  }
+}
+
 // ── Tambah rak baru (dari dalam dialog Tambah Batch atau Set Rak) ──
 const showTambahRak = ref(false)
 const savingRak = ref(false)
@@ -358,10 +399,57 @@ function kelasKedaluwarsa(tgl) {
   return ''
 }
 
+// ── Filter: status (server), akan expired (server → Set ID), di bawah minimum (client) ──
+const statusFilter = ref('0')
+const statusOptions = [
+  { label: 'Aktif', value: '0' },
+  { label: 'Diarsipkan', value: '1' },
+  { label: 'Semua status', value: '' }
+]
+const expiredMonths = ref(0)
+const expiredOptions = [
+  { label: 'Semua expired', value: 0 },
+  { label: 'Expired ≤ 1 bulan', value: 1 },
+  { label: 'Expired ≤ 3 bulan', value: 3 },
+  { label: 'Expired ≤ 6 bulan', value: 6 }
+]
+const expiredIds = ref(null) // Set ID obat, null = filter mati
+const belowMin = ref(false)
+
+async function onExpiredChange() {
+  if (!expiredMonths.value) {
+    expiredIds.value = null
+    return
+  }
+  try {
+    expiredIds.value = await getIdObatAkanExpired(expiredMonths.value)
+  } catch (err) {
+    expiredIds.value = null
+    toast.add({ severity: 'error', summary: 'Gagal memuat filter expired', detail: err.message, life: 5000 })
+  }
+}
+
+async function muatObat() {
+  loading.value = true
+  try {
+    obat.value = await getDaftarObat(statusFilter.value)
+    batchByItem.value = {}
+    if (expiredMonths.value) await onExpiredChange()
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Gagal memuat obat', detail: err.message, life: 5000 })
+  } finally {
+    loading.value = false
+  }
+}
+
 const obatTampil = computed(() => {
   const q = keyword.value.trim().toLowerCase()
-  if (!q) return obat.value
-  return obat.value.filter((o) => [o.NAMA, o.IDBARANG, o.SATUAN_KECIL].some((v) => String(v ?? '').toLowerCase().includes(q)))
+  return obat.value.filter(
+    (o) =>
+      (!q || [o.NAMA, o.IDBARANG, o.SATUAN_KECIL].some((v) => String(v ?? '').toLowerCase().includes(q))) &&
+      (!belowMin.value || o.is_below_minimum) &&
+      (!expiredIds.value || expiredIds.value.has(Number(o.ID)))
+  )
 })
 
 // ── Ringkasan header ───────────────────────────────────────────
@@ -376,7 +464,7 @@ async function muat() {
   loading.value = true
   const hasil = await Promise.allSettled([
     getInfoLokasi(),
-    getDaftarObat(),
+    getDaftarObat(statusFilter.value),
     getKategoriObat(),
     getKlasifikasiObat(),
     getBentukSediaan(),
@@ -508,6 +596,81 @@ async function hapus(o) {
   }
 }
 
+// ── Arsip / aktifkan (obat & batch) + kartu stok ──────────────
+const showKartu = ref(false)
+const kartuObat = ref(null)
+function bukaKartu(o) {
+  kartuObat.value = o
+  showKartu.value = true
+}
+
+// Satu Menu popup dipakai bareng semua baris (pola sama dengan ObatListView apotek).
+const aksiMenuRef = ref(null)
+const aksiMenuModel = ref([])
+function toggleAksiMenu(event, items) {
+  aksiMenuModel.value = items
+  aksiMenuRef.value.toggle(event)
+}
+function obatAksiItems(o) {
+  const diarsip = Number(o.ARSIPKAN) === 1
+  return [
+    { label: 'Kartu Stok', icon: 'pi pi-book', class: 'aksi-item-help', command: () => bukaKartu(o) },
+    { label: 'Edit', icon: 'pi pi-pencil', class: 'aksi-item-warn', command: () => bukaEdit(o) },
+    diarsip
+      ? { label: 'Aktifkan', icon: 'pi pi-check-circle', class: 'aksi-item-success', command: () => konfirmasiArsip(o) }
+      : { label: 'Arsipkan', icon: 'pi pi-inbox', class: 'aksi-item-warn', command: () => konfirmasiArsip(o) },
+    { separator: true },
+    { label: 'Hapus', icon: 'pi pi-trash', class: 'aksi-item-danger', command: () => konfirmasiHapus(o) }
+  ]
+}
+
+function konfirmasiArsip(o) {
+  const arsip = !Number(o.ARSIPKAN)
+  confirm.require({
+    header: arsip ? 'Arsipkan obat?' : 'Aktifkan obat?',
+    message: arsip
+      ? `"${o.NAMA}" tidak akan muncul di transaksi, tetapi riwayat tetap tersimpan.`
+      : `"${o.NAMA}" akan kembali aktif.`,
+    icon: 'pi pi-question-circle',
+    acceptLabel: arsip ? 'Arsipkan' : 'Aktifkan',
+    rejectLabel: 'Batal',
+    rejectProps: { severity: 'secondary', outlined: true },
+    accept: () => ubahStatus(o.NAMA, () => (arsip ? arsipkanObat(o.ID) : aktifkanObat(o.ID)), arsip, muatObat)
+  })
+}
+
+function konfirmasiArsipBatch(o, b) {
+  const arsip = !Number(b.ARSIPKAN)
+  confirm.require({
+    header: arsip ? 'Arsipkan batch?' : 'Aktifkan batch?',
+    message: `Batch ${b.BATCH_NUMBER || b.SUB_BARCODE} — ${o.NAMA}`,
+    icon: 'pi pi-question-circle',
+    acceptLabel: arsip ? 'Arsipkan' : 'Aktifkan',
+    rejectLabel: 'Batal',
+    rejectProps: { severity: 'secondary', outlined: true },
+    accept: () =>
+      ubahStatus(
+        o.NAMA,
+        () => (arsip ? arsipkanBatch(b.ID) : aktifkanBatch(b.ID)),
+        arsip,
+        async () => {
+          await muatBatch(o.ID)
+          obat.value = await getDaftarObat(statusFilter.value) // total stok ikut berubah
+        }
+      )
+  })
+}
+
+async function ubahStatus(nama, aksi, arsip, sesudah) {
+  try {
+    await aksi()
+    toast.add({ severity: 'success', summary: arsip ? 'Diarsipkan' : 'Diaktifkan', detail: nama, life: 3000 })
+    await sesudah()
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Gagal mengubah status', detail: err.message, life: 5000 })
+  }
+}
+
 function clearError(key) {
   if (errors.value[key]) errors.value = { ...errors.value, [key]: '' }
 }
@@ -612,6 +775,9 @@ onMounted(muat)
           <InputText v-model="keyword" placeholder="Cari nama obat, kode, atau satuan" fluid />
         </IconField>
         <div class="toolbar__right">
+          <Select v-model="statusFilter" :options="statusOptions" optionLabel="label" optionValue="value" size="small" @change="muatObat" />
+          <Select v-model="expiredMonths" :options="expiredOptions" optionLabel="label" optionValue="value" size="small" @change="onExpiredChange" />
+          <ToggleButton v-model="belowMin" onLabel="Stok minimum" offLabel="Stok minimum" onIcon="pi pi-exclamation-triangle" offIcon="pi pi-exclamation-triangle" size="small" />
           <span class="toolbar__count">{{ obatTampil.length }} obat</span>
           <Button icon="pi pi-refresh" text rounded severity="secondary" :loading="loading" aria-label="Muat ulang" v-tooltip.top="'Muat ulang'" @click="muat" />
         </div>
@@ -663,31 +829,19 @@ onMounted(muat)
             <span v-else>—</span>
           </template>
         </Column>
-        <Column header="Aksi" frozen alignFrozen="right" style="width: 6.5rem">
+        <Column header="Aksi" frozen alignFrozen="right" style="min-width: 6rem">
           <template #body="{ data }">
-            <div class="actions">
-              <Button
-                icon="pi pi-pencil"
-                text
-                rounded
-                severity="secondary"
-                size="small"
-                :aria-label="`Edit ${data.NAMA}`"
-                v-tooltip.top="'Edit'"
-                @click="bukaEdit(data)"
-              />
-              <Button
-                icon="pi pi-trash"
-                text
-                rounded
-                severity="danger"
-                size="small"
-                :loading="deleting === data.ID"
-                :aria-label="`Hapus ${data.NAMA}`"
-                v-tooltip.top="'Hapus'"
-                @click="konfirmasiHapus(data)"
-              />
-            </div>
+            <Button
+              label="Aksi"
+              icon="pi pi-chevron-down"
+              iconPos="right"
+              size="small"
+              outlined
+              severity="secondary"
+              class="aksi-menu-btn"
+              :loading="deleting === data.ID"
+              @click="toggleAksiMenu($event, obatAksiItems(data))"
+            />
           </template>
         </Column>
 
@@ -777,6 +931,16 @@ onMounted(muat)
                         @click="bukaEditBatch(data, b)"
                       />
                       <Button
+                        icon="pi pi-plus-circle"
+                        text
+                        rounded
+                        severity="secondary"
+                        size="small"
+                        :aria-label="`Tambah stok batch ${b.SUB_BARCODE}`"
+                        v-tooltip.top="'Tambah stok'"
+                        @click="bukaTambahStok(data, b)"
+                      />
+                      <Button
                         icon="pi pi-map-marker"
                         text
                         rounded
@@ -785,6 +949,16 @@ onMounted(muat)
                         :aria-label="`Set rak untuk batch ${b.SUB_BARCODE}`"
                         v-tooltip.top="'Set rak'"
                         @click="bukaSetRak(data.ID, b)"
+                      />
+                      <Button
+                        :icon="Number(b.ARSIPKAN) ? 'pi pi-replay' : 'pi pi-inbox'"
+                        text
+                        rounded
+                        severity="secondary"
+                        size="small"
+                        :aria-label="`${Number(b.ARSIPKAN) ? 'Aktifkan' : 'Arsipkan'} batch ${b.SUB_BARCODE}`"
+                        v-tooltip.top="Number(b.ARSIPKAN) ? 'Aktifkan batch' : 'Arsipkan batch'"
+                        @click="konfirmasiArsipBatch(data, b)"
                       />
                     </div>
                   </td>
@@ -796,6 +970,9 @@ onMounted(muat)
         </template>
       </DataTable>
     </section>
+
+    <Menu ref="aksiMenuRef" :model="aksiMenuModel" popup class="aksi-menu" />
+    <KartuStokDialog v-model:visible="showKartu" :obat="kartuObat" />
 
     <!-- Dialog tambah / edit obat -->
     <Dialog
@@ -1151,6 +1328,30 @@ onMounted(muat)
       </template>
     </Dialog>
 
+    <!-- Dialog tambah stok ke batch yang sudah ada -->
+    <Dialog v-model:visible="showTambahStok" header="Tambah Stok Batch" modal :closable="!savingStok" :style="{ width: '26rem' }">
+      <p v-if="stokTarget.batch" class="batch-dialog-sub">
+        {{ stokTarget.obat.NAMA }} — batch <strong class="mono">{{ stokTarget.batch.SUB_BARCODE }}</strong><template v-if="stokTarget.batch.BATCH_NUMBER"> ({{ stokTarget.batch.BATCH_NUMBER }})</template>
+        <br />Stok saat ini: {{ qtyDisplay(stokTarget.obat, stokTarget.batch) }}
+      </p>
+      <div class="field">
+        <label for="ts-qty">Jumlah <span class="req">*</span></label>
+        <div class="rak-row">
+          <InputNumber id="ts-qty" v-model="formStok.qty" :min="0" :maxFractionDigits="2" :invalid="!!errorStok" @update:modelValue="errorStok = ''" fluid />
+          <Select v-model="formStok.satuan" :options="satuanBatchOptions(stokTarget.obat)" style="min-width: 7rem" />
+        </div>
+        <small v-if="errorStok" class="p-error">{{ errorStok }}</small>
+      </div>
+      <div class="field">
+        <label for="ts-catatan">Catatan</label>
+        <InputText id="ts-catatan" v-model="formStok.catatan" fluid />
+      </div>
+      <template #footer>
+        <Button label="Batal" severity="secondary" outlined :disabled="savingStok" @click="showTambahStok = false" />
+        <Button label="Tambah stok" icon="pi pi-save" :loading="savingStok" @click="simpanTambahStok" />
+      </template>
+    </Dialog>
+
     <!-- Dialog set rak untuk batch yang sudah ada -->
     <Dialog v-model:visible="showSetRak" header="Set Rak Batch" modal :closable="!savingSetRak" :style="{ width: '26rem' }">
       <p v-if="setRak.batch" class="batch-dialog-sub">
@@ -1261,6 +1462,33 @@ onMounted(muat)
 .stok-kurang {
   margin-left: 0.375rem;
   color: var(--p-red-500);
+}
+.aksi-menu-btn {
+  padding: 0.15rem 0.55rem !important;
+  font-size: 11px !important;
+  height: 1.6rem !important;
+  min-height: unset !important;
+  border-radius: 6px !important;
+}
+:global(.aksi-item-help .p-menu-item-icon),
+:global(.aksi-item-help .p-menu-item-label) {
+  color: #7c3aed !important;
+}
+:global(.aksi-item-warn .p-menu-item-icon),
+:global(.aksi-item-warn .p-menu-item-label) {
+  color: #d97706 !important;
+}
+:global(.aksi-item-success .p-menu-item-icon),
+:global(.aksi-item-success .p-menu-item-label) {
+  color: #16a34a !important;
+}
+:global(.aksi-item-danger .p-menu-item-icon),
+:global(.aksi-item-danger .p-menu-item-label) {
+  color: #dc2626 !important;
+}
+:global(.aksi-menu .p-menu-item:not(.p-disabled) .p-menu-item-content:hover),
+:global(.aksi-menu .p-menu-item.p-focus .p-menu-item-content) {
+  background: #f1f5f9 !important;
 }
 .actions {
   display: flex;

@@ -39,7 +39,9 @@ export const menu = [
           { label: 'Resep Masuk', to: '/farmasi/resep' },
           { label: 'Stok Obat', to: '/farmasi/stok' },
           { label: 'Surat Pesanan Obat', to: '/farmasi/pesanan' },
-          { label: 'Penerimaan Barang', to: '/farmasi/penerimaan' }
+          { label: 'Penerimaan Barang', to: '/farmasi/penerimaan' },
+          { label: 'Stock Opname', to: '/farmasi/opname', exact: true },
+          { label: 'Riwayat Opname', to: '/farmasi/opname/riwayat' }
         ]
       },
       {
