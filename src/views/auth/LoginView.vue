@@ -128,7 +128,7 @@ onMounted(() => {
     <!-- Kartu login -->
     <div class="login">
       <div class="login__brand">
-        <h1 class="login__heading"><strong>{{ appName }}</strong> Login</h1>
+        <h1 class="login__heading"><strong>{{ appName }}</strong>  </h1>
         <span class="login__logo" aria-hidden="true">
           <svg viewBox="0 0 24 24" width="30" height="30"><path d="M9 3h6v6h6v6h-6v6H9v-6H3V9h6z" fill="currentColor" /></svg>
         </span>

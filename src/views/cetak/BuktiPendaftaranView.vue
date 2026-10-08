@@ -151,12 +151,6 @@ onBeforeUnmount(() => pageStyle?.remove())
 
       <h1 class="judul">Bukti Pendaftaran<small>Rawat Jalan</small></h1>
 
-      <div v-if="data.NOMORANTRIAN" class="antrian">
-        <span class="antrian__label">Nomor antrian</span>
-        <strong class="antrian__nomor">{{ data.NOMORANTRIAN }}</strong>
-        <span class="antrian__poli">{{ data.POLI }}</span>
-      </div>
-
       <dl class="data">
         <div v-for="r in baris" :key="r.label" class="data__row">
           <dt>{{ r.label }}</dt>
@@ -275,25 +269,6 @@ onBeforeUnmount(() => pageStyle?.remove())
   text-transform: none;
   letter-spacing: 0;
   color: var(--ink-muted);
-}
-
-.antrian {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin: 0 0 3mm;
-  padding: 2.5mm;
-  border: 1.5px dashed var(--ink);
-  line-height: 1.15;
-}
-.antrian__label,
-.antrian__poli {
-  font-size: 0.85em;
-  color: var(--ink-muted);
-}
-.antrian__nomor {
-  font-size: 3em;
-  letter-spacing: 0.04em;
 }
 
 .data {

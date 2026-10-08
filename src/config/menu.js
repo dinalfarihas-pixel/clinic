@@ -10,8 +10,9 @@ export const menu = [
   {
     section: 'Utama',
     items: [
-      { label: 'Dashboard', icon: 'pi pi-home', to: '/' },
-      { label: 'Antrian', icon: 'pi pi-ticket', to: '/antrian', badge: 12 }
+      { label: 'Dashboard', icon: 'pi pi-home', to: '/' }
+      // Disembunyikan sementara — aktifkan lagi dengan menghapus komentar ini
+      // { label: 'Antrian', icon: 'pi pi-ticket', to: '/antrian', badge: 12 }
     ]
   },
   {

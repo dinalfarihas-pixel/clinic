@@ -72,7 +72,8 @@ function toPasien(lokal, bpjs) {
   const tglLahir = bpjs?.tglLahir || lokal?.TGLLAHIR || ''
   return {
     ...emptyPasien(),
-    noMR: lokal?.NOMR || bpjs?.mr?.noMR || '',
+    // Hanya RM lokal: mr.noMR dari BPJS adalah RM di faskes lain, bukan RM klinik ini
+    noMR: lokal?.NOMR || '',
     nama: bpjs?.nama || lokal?.NAMAPASIEN || '',
     nik: bpjs?.nik || lokal?.NOKTP || '',
     noKartu: bpjs?.noKartu || lokal?.NO_KARTU || '',
@@ -200,7 +201,7 @@ onMounted(() => {
       </div>
       <div class="page-actions">
         <Button label="Riwayat" icon="pi pi-history" severity="secondary" text @click="$router.push('/riwayat-pendaftaran')" />
-        <Button label="Pasien baru" icon="pi pi-user-plus" severity="secondary" outlined @click="pasienBaru" />
+        <Button label="Pasien baru" icon="pi pi-user-plus" severity="secondary" outlined @click="pasienBaru()" />
         <Button label="Cari pasien" icon="pi pi-search" @click="showCari = true" />
       </div>
     </header>
