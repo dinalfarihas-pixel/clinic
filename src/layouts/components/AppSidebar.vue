@@ -11,10 +11,18 @@ const auth = useAuthStore()
 const poli = usePoliStore()
 
 // Isi sub-menu dinamis: grup `dynamic: 'poli'` berisi satu item per poli klinik
+// Sembunyikan menu yang tidak boleh diakses; grup tanpa sisa anak & section kosong ikut hilang
+function saring(items) {
+  return items
+    .filter((item) => !item.key || auth.bolehAkses(item.key))
+    .map((item) => (item.items?.length && !item.dynamic ? { ...item, items: saring(item.items) } : item))
+    .filter((item) => item.dynamic || item.to || item.items?.length)
+}
+
 const menuTampil = computed(() =>
   menu.map((group) => ({
     ...group,
-    items: group.items.map((item) =>
+    items: saring(group.items).map((item) =>
       item.dynamic === 'poli'
         ? {
             ...item,
@@ -24,7 +32,7 @@ const menuTampil = computed(() =>
           }
         : item
     )
-  }))
+  })).filter((group) => group.items.length)
 )
 
 // Muat daftar poli setelah login; kosongkan saat logout
@@ -37,11 +45,13 @@ const appName = import.meta.env.VITE_APP_NAME || 'Klinik'
 
 // Logo klinik dari profil; kembali ke ikon bawaan jika gagal dimuat
 const logoError = ref(false)
-watch(() => auth.logo, () => (logoError.value = false))
+watch(() => auth.logoKlinik, () => (logoError.value = false))
 
 onMounted(() => {
   // Sesi lama yang belum punya profil klinik
   if (auth.isLoggedIn && !auth.company) auth.loadProfile()
+  // Segarkan hak akses (perubahan dari admin berlaku saat aplikasi dibuka kembali)
+  if (auth.isLoggedIn) auth.muatHakAkses()
 })
 </script>
 
@@ -49,8 +59,8 @@ onMounted(() => {
   <aside class="sidebar" aria-label="Navigasi utama">
     <RouterLink to="/" class="sidebar__brand" :title="auth.company || appName">
       <img
-        v-if="auth.logo && !logoError"
-        :src="auth.logo"
+        v-if="auth.logoKlinik && !logoError"
+        :src="auth.logoKlinik"
         alt=""
         class="sidebar__logo sidebar__logo--img"
         @error="logoError = true"

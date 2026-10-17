@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import { useAuthStore } from '@/stores/auth'
@@ -11,10 +11,24 @@ const toast = useToast()
 
 const appName = import.meta.env.VITE_APP_NAME || 'Klinik'
 const REMEMBER_KEY = 'klinik.remember_username'
+const BRAND_KEY = 'klinik.last_brand' // nama dan logo klinik login terakhir (tidak ikut terhapus saat logout)
 
 const form = ref({ username: '', password: '' })
 const rememberMe = ref(false)
 const loading = ref(false)
+
+function bacaBrand() {
+  try {
+    return JSON.parse(localStorage.getItem(BRAND_KEY) || 'null') || {}
+  } catch {
+    return {}
+  }
+}
+const brand = ref(bacaBrand())
+const logoError = ref(false)
+// Logo halaman login: LINK_LOGO2 bila ada, jika tidak LINK_LOGO
+const logoLogin = computed(() => brand.value.logo2 || brand.value.logo || '')
+const namaKlinik = computed(() => brand.value.nama || appName)
 
 // ── Latar ticker: fitur-fitur aplikasi ───────────────────────
 const tickerRows = [
@@ -73,6 +87,13 @@ async function submit() {
   try {
     await auth.login(form.value.username, form.value.password)
 
+    // Simpan nama & logo klinik agar tampil di halaman login berikutnya
+    try {
+      localStorage.setItem(BRAND_KEY, JSON.stringify({ nama: auth.company || '', logo: auth.logo || '', logo2: auth.logo2 || '' }))
+    } catch {
+      /* abaikan jika storage tidak tersedia */
+    }
+
     // Hanya nama pengguna yang diingat; kata sandi tidak disimpan di browser
     try {
       if (rememberMe.value) localStorage.setItem(REMEMBER_KEY, form.value.username)
@@ -128,8 +149,9 @@ onMounted(() => {
     <!-- Kartu login -->
     <div class="login">
       <div class="login__brand">
-        <h1 class="login__heading"><strong>{{ appName }}</strong>  </h1>
-        <span class="login__logo" aria-hidden="true">
+        <h1 class="login__heading"><strong>{{ namaKlinik }}</strong></h1>
+        <img v-if="logoLogin && !logoError" :src="logoLogin" alt="" class="login__logo login__logo--img" @error="logoError = true" />
+        <span v-else class="login__logo" aria-hidden="true">
           <svg viewBox="0 0 24 24" width="30" height="30"><path d="M9 3h6v6h6v6h-6v6H9v-6H3V9h6z" fill="currentColor" /></svg>
         </span>
         <p class="login__tagline">Sistem Informasi Manajemen Klinik</p>
@@ -295,6 +317,15 @@ onMounted(() => {
   background: var(--p-primary-color);
   color: var(--p-primary-contrast-color);
   box-shadow: 0 6px 16px color-mix(in srgb, var(--p-primary-color) 40%, transparent);
+}
+.login__logo--img {
+  width: auto;
+  height: 4.25rem;
+  max-width: 12rem;
+  border-radius: 0.5rem;
+  object-fit: contain;
+  background: transparent;
+  box-shadow: none;
 }
 .login__tagline {
   margin: 1rem 0 0;

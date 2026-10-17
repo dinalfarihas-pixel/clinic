@@ -148,8 +148,22 @@ async function cariPasien({ mode, keyword }) {
 // ── Pasien baru ──────────────────────────────────────────────
 const showPasienBaru = ref(false)
 const prefillPasienBaru = ref(null)
+const modeEdit = ref(false)
+
+// Edit data pasien yang sedang dipilih (hanya bila sudah punya No. RM)
+function editPasien() {
+  if (!pasien.value.noMR) {
+    notify('warn', 'Belum ada pasien', 'Cari pasien dengan No. RM terlebih dahulu.')
+    return
+  }
+  modeEdit.value = true
+  prefillPasienBaru.value = null
+  showCari.value = false
+  showPasienBaru.value = true
+}
 
 function pasienBaru(searchKeyword = '') {
+  modeEdit.value = false
   // Peserta BPJS yang ditemukan tetapi belum punya RM: datanya dipakai sebagai isian awal
   if (pasien.value.nama && !pasien.value.noMR) {
     prefillPasienBaru.value = { ...pasien.value }
@@ -167,7 +181,7 @@ function pasienBaru(searchKeyword = '') {
 
 async function onPasienBaruSaved(noRm) {
   showPasienBaru.value = false
-  muatStatistik()
+  if (!modeEdit.value) muatStatistik()
   // Langsung muat pasien yang baru dibuat agar bisa didaftarkan kunjungannya
   if (noRm) await cariPasien({ mode: 'rm', keyword: String(noRm) })
   else showCari.value = true
@@ -218,7 +232,7 @@ onMounted(() => {
 
     <div class="reg-layout">
       <aside class="reg-layout__side">
-        <PasienInfoCard :pasien="pasien" />
+        <PasienInfoCard :pasien="pasien" @edit="editPasien" />
       </aside>
 
       <div class="reg-layout__main">
@@ -250,10 +264,17 @@ onMounted(() => {
       :loading="searching"
       @cari="cariPasien"
       @pasien-baru="pasienBaru"
+      @edit="editPasien"
       @lanjut="showCari = false"
     />
 
-    <PasienBaruDialog v-model:visible="showPasienBaru" :prefill="prefillPasienBaru" @saved="onPasienBaruSaved" />
+    <PasienBaruDialog
+      v-model:visible="showPasienBaru"
+      :prefill="prefillPasienBaru"
+      :edit="modeEdit"
+      :norm="pasien.noMR"
+      @saved="onPasienBaruSaved"
+    />
   </div>
 </template>
 

@@ -126,7 +126,7 @@ onBeforeUnmount(() => pageStyle?.remove())
     <!-- Kertas -->
     <article v-else-if="kunjungan" class="kertas">
       <header class="kop">
-        <img v-if="auth.logo" :src="auth.logo" alt="" class="kop__logo" />
+        <img v-if="auth.logoKlinik" :src="auth.logoKlinik" alt="" class="kop__logo" />
         <div class="kop__text">
           <strong class="kop__nama">{{ auth.company || 'KLINIK' }}</strong>
           <span v-if="auth.alamat" class="kop__alamat">{{ auth.alamat }}</span>
@@ -162,6 +162,23 @@ onBeforeUnmount(() => pageStyle?.remove())
       <div class="garis-tebal" />
 
       <p v-if="!adaTagihan" class="kosong">Belum ada item tagihan untuk kunjungan ini.</p>
+      <!-- Struk 80 mm: tabel 5 kolom terlalu sempit, jadi tiap item dua baris (nama; qty × harga ... subtotal) -->
+      <div v-else-if="format === 'struk'" class="struk-list">
+        <template v-for="(items, kategori) in groupedByCategory" :key="kategori">
+          <div class="struk-kat">{{ kategori }}</div>
+          <div v-for="(item, idx) in items" :key="idx" class="struk-item">
+            <div class="struk-item__nama">{{ item.ITEM }}</div>
+            <div class="struk-item__baris">
+              <span class="mono">{{ item.QTY }}{{ item.SATUAN ? ` ${item.SATUAN}` : '' }} × {{ rupiah.format(item.HARGA || 0) }}</span>
+              <span class="mono">{{ rupiah.format(item.TOTALAMOUNT || 0) }}</span>
+            </div>
+          </div>
+          <div class="struk-sub">
+            <span>Subtotal {{ kategori }}</span>
+            <span class="mono">{{ rupiah.format(items.reduce((s, i) => s + (Number(i.TOTALAMOUNT) || 0), 0)) }}</span>
+          </div>
+        </template>
+      </div>
       <table v-else class="bill-table">
         <thead>
           <tr>
@@ -282,14 +299,49 @@ onBeforeUnmount(() => pageStyle?.remove())
 }
 .kop__text {
   display: flex;
+  flex: 1;
   flex-direction: column;
+  align-items: center;
+  text-align: center;
   line-height: 1.3;
+}
+/* Ukuran logo klinik (logo lebar): tinggi 14 mm, lebar menyesuaikan maks. 28 mm */
+.kop__logo,
+.cetak--a4 .kop__logo,
+.cetak--a5 .kop__logo {
+  width: auto;
+  height: 14mm;
+  max-width: 28mm;
+  object-fit: contain;
+  object-position: left center;
+}
+/* Logo di kiri tanpa menggeser teks: teks kop tepat di tengah halaman (simetris dengan judul) */
+.kop {
+  position: relative;
+  justify-content: center;
+}
+.kop__logo {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.kop__text {
+  padding-inline: 30mm;
+}
+.cetak--struk .kop__logo {
+  position: static;
+  transform: none;
+}
+.cetak--struk .kop__text {
+  padding-inline: 0;
 }
 .kop__nama {
   font-size: 1.2em;
   text-transform: uppercase;
 }
 .kop__alamat {
+  white-space: pre-line;
   font-size: 0.85em;
   color: var(--ink-muted);
 }
@@ -434,6 +486,44 @@ onBeforeUnmount(() => pageStyle?.remove())
 }
 .bill-table__subtotal em {
   font-style: normal;
+}
+
+.struk-kat {
+  margin-top: 2.5mm;
+  padding-bottom: 0.5mm;
+  border-bottom: 0.5px solid var(--ink);
+  font-size: 0.85em;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.struk-item {
+  padding: 1mm 0;
+  border-bottom: 0.5px dotted var(--rule);
+}
+.struk-item__nama {
+  word-break: break-word;
+  line-height: 1.25;
+}
+.struk-item__baris,
+.struk-sub {
+  display: flex;
+  justify-content: space-between;
+  gap: 2mm;
+}
+.struk-item__baris {
+  margin-top: 0.4mm;
+  font-size: 0.9em;
+  color: var(--ink-muted);
+}
+.struk-item__baris span:last-child {
+  color: var(--ink);
+}
+.struk-sub {
+  padding-top: 1mm;
+  font-size: 0.9em;
+  font-weight: 700;
+  font-style: italic;
 }
 
 .total-row {

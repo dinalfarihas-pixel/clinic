@@ -52,7 +52,10 @@ export async function getDaftarResepMasuk({ tglAwal, tglAkhir }) {
  * (dipakai juga sbg SATUAN tampilan), QTY (sudah diberikan), QTY_REQ (diminta), HARGA,
  * HARGABELI, TOTALAMOUNT, DISCOUNT, STATUS, REMARK_ITEM, JSON_FILE (batch yang sudah dipilih
  * bila ada), STATUS_PROGRESS, AS_PARENT, JENIS_R.
- * Mengembalikan { header, items } — header null bila resep tidak ditemukan.
+ * Mengembalikan { header, items, racikan } — header null bila resep tidak ditemukan.
+ * `racikan` = baris induk racikan (nama racikan, QTY = jumlah, MEREK = satuan, REMARK_ITEM =
+ * aturan pakai); tidak ikut di `items` karena bukan stok nyata, hanya untuk ditampilkan sebagai
+ * judul kelompok. Bahannya adalah baris `items` ber-JENIS_R kosong dengan ITEMSEQNO sesudahnya.
  */
 export async function getDetailResep(trans, { tanggal, nomr, noregister } = {}) {
   
@@ -66,8 +69,8 @@ export async function getDetailResep(trans, { tanggal, nomr, noregister } = {}) 
     NOREGIRTER_KLINIK: noregister || null
   })
   const rows = Array.isArray(res?.response) ? res.response : []
-  const items = rows.filter((r) => !(String(r.BARCODE) === '00000' && r.JENIS_R === 'R/' && String(r.AS_PARENT) === '1'))
-  return { header: rows[0] || null, items }
+  const isInduk = (r) => String(r.BARCODE) === '00000' && r.JENIS_R === 'R/' && String(r.AS_PARENT) === '1'
+  return { header: rows[0] || null, items: rows.filter((r) => !isInduk(r)), racikan: rows.filter(isInduk) }
 }
 
 /**

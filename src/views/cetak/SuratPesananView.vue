@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { getDetailPemesanan } from '@/services/pemesanan'
@@ -12,6 +12,16 @@ const details = ref([])
 const grandTotal = ref(0)
 const loading = ref(true)
 const error = ref('')
+
+// baris kosong agar tabel selalu terisi seperti formulir surat pesanan
+const MIN_BARIS = 15
+const barisKosong = computed(() => Math.max(0, MIN_BARIS - details.value.length))
+
+// pratinjau layar diperkecil proporsional (rasio A4 tetap) bila jendela lebih sempit dari 210mm
+const skala = ref(1)
+function hitungSkala() {
+  skala.value = Math.min(1, (window.innerWidth - 32) / (210 * 3.7795))
+}
 
 const rupiah = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 })
 const tanggalPanjang = (tgl) => (tgl ? new Date(tgl).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' }) : '—')
@@ -55,9 +65,15 @@ async function muat() {
 
 onMounted(() => {
   terapkanUkuranHalaman()
+  if (!auth.noSipa) auth.muatHakAkses()
+  hitungSkala()
+  window.addEventListener('resize', hitungSkala)
   muat()
 })
-onBeforeUnmount(() => pageStyle?.remove())
+onBeforeUnmount(() => {
+  pageStyle?.remove()
+  window.removeEventListener('resize', hitungSkala)
+})
 </script>
 
 <template>
@@ -72,67 +88,79 @@ onBeforeUnmount(() => pageStyle?.remove())
     <div v-if="loading" class="status no-print"><i class="pi pi-spin pi-spinner" /> Memuat surat pesanan…</div>
     <Message v-else-if="error" severity="error" icon="pi pi-exclamation-circle" class="no-print">{{ error }}</Message>
 
-    <article v-else-if="head" class="kertas">
+    <article v-else-if="head" class="kertas" :style="{ zoom: skala }">
       <header class="kop">
-        <img v-if="auth.logo" :src="auth.logo" alt="" class="kop__logo" />
+        <div class="kop__slot"><img v-if="auth.logo" :src="auth.logo" alt="" class="kop__logo" /></div>
         <div class="kop__text">
-          <strong class="kop__nama">{{ auth.company || 'KLINIK' }}</strong>
+          <strong class="kop__nama">{{ auth.companyApotek || auth.company || 'APOTEK' }}</strong>
           <span v-if="auth.alamat" class="kop__alamat">{{ auth.alamat }}</span>
         </div>
+        <div class="kop__slot"></div>
       </header>
 
       <h1 class="judul">Surat Pesanan Obat</h1>
-      <div class="ringkas">
-        <span>No. {{ head.no_sp }}</span>
-        <span>{{ tanggalPanjang(head.tanggal_sp) }}</span>
-      </div>
+      <p class="nomor">No : {{ head.no_sp }}</p>
 
-      <section class="tujuan">
-        <p class="tujuan__label">Kepada Yth.</p>
-        <p class="tujuan__nama">{{ head.nama_supplier }}</p>
-        <p v-if="head.alamat_supplier" class="tujuan__alamat">{{ head.alamat_supplier }}</p>
+      <section class="info">
+        <table class="info__kiri">
+          <tbody>
+            <tr>
+              <td>Apoteker</td>
+              <td>: {{ auth.user?.name || '..........................' }}</td>
+            </tr>
+            <tr>
+              <td>SIPA</td>
+              <td>: {{ auth.noSipa || '..........................' }}</td>
+            </tr>
+            <tr v-if="head.no_referensi">
+              <td>No. referensi</td>
+              <td>: {{ head.no_referensi }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="info__kanan">
+          <p>Kepada YTH</p>
+          <p class="info__supplier">{{ head.nama_supplier }}</p>
+          <p v-if="head.alamat_supplier" class="info__alamat">{{ head.alamat_supplier }}</p>
+        </div>
       </section>
 
-      <p class="pengantar">Dengan ini kami memesan barang dengan rincian sebagai berikut:</p>
+      <p class="pengantar">Bersama ini kami sampaikan pesanan sebagai berikut :</p>
 
       <table class="tabel">
         <thead>
           <tr>
-            <th style="width: 3%">No.</th>
-            <th style="width: 37%">Nama barang</th>
-            <th style="width: 10%">Qty</th>
-            <th style="width: 12%">Satuan</th>
-            <th style="width: 18%">Harga satuan</th>
-            <th style="width: 20%">Subtotal</th>
+            <th style="width: 7%">No</th>
+            <th>Nama Barang</th>
+            <th style="width: 16%">Qty</th>
+            <th style="width: 16%">Satuan</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="(d, idx) in details" :key="d.id_detail_pemesanan">
-            <td>{{ idx + 1 }}</td>
+            <td class="tengah">{{ idx + 1 }}</td>
             <td>{{ d.nama_barang }}</td>
-            <td>{{ d.qty_pesan }}</td>
-            <td>{{ d.satuan }}</td>
-            <td>{{ rupiah.format(d.harga_satuan) }}</td>
-            <td>{{ rupiah.format(d.total_harga) }}</td>
+            <td class="tengah">{{ d.qty_pesan }}</td>
+            <td class="tengah">{{ d.satuan }}</td>
+          </tr>
+          <tr v-for="n in barisKosong" :key="'kosong-' + n">
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
           </tr>
         </tbody>
-        <tfoot>
-          <tr>
-            <td colspan="5" class="tabel__total-label">Grand total</td>
-            <td class="tabel__total">{{ rupiah.format(grandTotal) }}</td>
-          </tr>
-        </tfoot>
       </table>
 
       <p v-if="head.keterangan" class="keterangan">Keterangan: {{ head.keterangan }}</p>
-      <p v-if="head.no_referensi" class="keterangan">No. referensi: {{ head.no_referensi }}</p>
 
       <section class="ttd">
         <div class="ttd__blok">
-          <p>Hormat kami,</p>
+          <p>Nagan Raya, {{ tanggalPanjang(head.tanggal_sp) }}</p>
+          <p>Apoteker Penanggung Jawab</p>
           <div class="ttd__ruang"></div>
-          <p class="ttd__nama">{{ head.nama_pj || '( ___________________ )' }}</p>
-          <p v-if="head.no_sipa" class="ttd__sub">No. SIPA: {{ head.no_sipa }}</p>
+          <p class="ttd__nama">{{ auth.user?.name || '( ___________________ )' }}</p>
+          <p v-if="auth.noSipa" class="ttd__sub">SIPA: {{ auth.noSipa }}</p>
         </div>
       </section>
     </article>
@@ -142,8 +170,6 @@ onBeforeUnmount(() => pageStyle?.remove())
 <style scoped>
 .cetak {
   --ink: #111;
-  --ink-muted: #555;
-  --rule: #999;
   width: 100%;
   max-width: 210mm;
   display: grid;
@@ -172,127 +198,143 @@ onBeforeUnmount(() => pageStyle?.remove())
 .kertas {
   background: #fff;
   color: var(--ink);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--app-font);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
   width: 210mm;
   min-height: 297mm;
   max-width: 100%;
   padding: 15mm;
-  font-size: 10.5pt;
+  font-size: 11pt;
 }
 
 .kop {
-  display: flex;
+  display: grid;
+  grid-template-columns: 40mm 1fr 40mm;
   align-items: center;
   gap: 4mm;
-  padding-bottom: 3mm;
+  padding-bottom: 2mm;
   border-bottom: 2px solid var(--ink);
+  text-align: center;
+}
+.kop__slot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
 }
 .kop__logo {
-  width: 18mm;
+  width: 40mm;
   height: 18mm;
+  object-position: left center;
   object-fit: contain;
 }
 .kop__text {
   display: flex;
+  min-width: 0;
   flex-direction: column;
+  align-items: center;
+  text-align: center;
   line-height: 1.3;
 }
 .kop__nama {
   font-size: 1.3em;
   text-transform: uppercase;
+  overflow-wrap: anywhere;
 }
 .kop__alamat {
-  font-size: 0.85em;
-  color: var(--ink-muted);
+  white-space: pre-line;
+  font-size: 0.8em;
 }
 
 .judul {
-  margin: 5mm 0 1mm;
-  font-size: 1.15em;
+  margin: 8mm 0 0;
+  font-size: 1.2em;
   text-align: center;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
   text-decoration: underline;
 }
-.ringkas {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 5mm;
-  font-size: 0.9em;
-  color: var(--ink-muted);
-}
-
-.tujuan {
-  margin-bottom: 4mm;
-}
-.tujuan p {
-  margin: 0;
-}
-.tujuan__label {
-  color: var(--ink-muted);
-}
-.tujuan__nama {
+.nomor {
+  margin: 1mm 0 8mm;
+  text-align: center;
   font-weight: 700;
 }
 
+.info {
+  display: flex;
+  justify-content: space-between;
+  gap: 8mm;
+  margin-bottom: 5mm;
+}
+.info__kiri td {
+  padding: 0 3mm 0 0;
+  vertical-align: top;
+}
+.info__kanan {
+  min-width: 60mm;
+}
+.info__kanan p {
+  margin: 0;
+}
+.info__supplier {
+  font-weight: 700;
+}
+.info__alamat {
+  font-size: 0.9em;
+}
+
 .pengantar {
-  margin: 0 0 3mm;
+  margin: 0 0 1mm;
 }
 
 .tabel {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.9em;
 }
 .tabel th,
 .tabel td {
-  border: 1px solid var(--rule);
-  padding: 1.5mm 2mm;
+  border: 1px solid var(--ink);
+  padding: 0.8mm 2mm;
   text-align: left;
+  height: 6mm;
 }
 .tabel th {
-  background: #f3f4f6;
-}
-.tabel__total-label {
-  text-align: right;
+  text-align: center;
   font-weight: 700;
 }
-.tabel__total {
-  font-weight: 700;
+.tabel .tengah {
+  text-align: center;
 }
 
 .keterangan {
   margin: 3mm 0 0;
   font-size: 0.9em;
-  color: var(--ink-muted);
 }
 
 .ttd {
   display: flex;
   justify-content: flex-end;
-  margin-top: 12mm;
+  margin-top: 8mm;
 }
 .ttd__blok {
-  text-align: center;
-  min-width: 55mm;
+  text-align: left;
+  min-width: 70mm;
 }
 .ttd__blok p {
   margin: 0;
 }
 .ttd__ruang {
-  height: 18mm;
+  height: 15mm;
 }
 .ttd__nama {
-  font-weight: 700;
   text-decoration: underline;
 }
 .ttd__sub {
-  font-size: 0.85em;
-  color: var(--ink-muted);
+  font-size: 0.9em;
 }
 
 @media print {
+  .tabel thead { display: table-header-group; }
+  .tabel tr,
+  .ttd { break-inside: avoid; }
   .no-print {
     display: none !important;
   }
@@ -309,6 +351,7 @@ onBeforeUnmount(() => pageStyle?.remove())
   }
   .kertas {
     box-shadow: none;
+    zoom: 1 !important;
     width: 100%;
     min-height: 0;
     padding: 0 !important;

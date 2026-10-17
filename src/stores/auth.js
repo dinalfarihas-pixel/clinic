@@ -1,9 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { http } from '@/services/http'
+import { getDaftarPengguna } from '@/services/pengguna'
+import { parseRoles, ROLE_ADMIN, ROLE_USER, KEY_SELALU } from '@/config/akses'
+import { semuaItemMenu } from '@/config/menu'
+import { rapikanAlamat } from '@/utils/format'
 
 // Key localStorage sama dengan SIMRS supaya data sesi bisa dibaca store lain (mis. useAuthStore di config.js)
-const KEYS = ['loggedIn', 'id_client', 'user_name', 'user_id', 'id_lokasi', 'group_user', 'kd_dokter', 'token', 'NAMA_RS', 'LINK_LOGO', 'ALAMAT', 'KODE_PPK', 'user', 'last_activity']
+const KEYS = ['loggedIn', 'id_client', 'user_name', 'user_id', 'id_lokasi', 'group_user', 'kd_dokter', 'token', 'NAMA_RS', 'NAMA_RS_2', 'LINK_LOGO', 'LINK_LOGO2', 'ALAMAT', 'KODE_PPK', 'user', 'last_activity', 'hak_akses', 'no_sipa']
 
 // Sesi otomatis dianggap habis jika tidak ada aktivitas selama 3 jam
 const SESSION_TIMEOUT_MS = 3 * 60 * 60 * 1000
@@ -19,6 +23,14 @@ function read(key) {
 function readNumber(key) {
   const v = read(key)
   return v ? Number(v) : null
+}
+
+function readAkses() {
+  try {
+    return JSON.parse(read('hak_akses') || 'null')
+  } catch {
+    return null
+  }
 }
 
 function readUser() {
@@ -39,13 +51,47 @@ export const useAuthStore = defineStore('auth', () => {
   const userId = ref(read('user_id'))
   const idLokasi = ref(read('id_lokasi'))
   const kdDokter = ref(read('kd_dokter'))
-  const company = ref(read('NAMA_RS')) // nama klinik
+  const company = ref(read('NAMA_RS'))         // nama klinik
+  const companyApotek = ref(read('NAMA_RS_2')) // nama apotek (NAMA_RS_2)
   const logo = ref(read('LINK_LOGO'))
-  const alamat = ref(read('ALAMAT'))
+  const logo2 = ref(read('LINK_LOGO2')) // logo alternatif (profile_rs.LINK_LOGO2), dipakai di halaman login
+  // Logo untuk dokumen/halaman klinik: LINK_LOGO2, jika kosong LINK_LOGO. Dokumen apotek tetap memakai `logo` (LINK_LOGO).
+  const logoKlinik = computed(() => logo2.value || logo.value)
+  const alamat = ref(rapikanAlamat(read('ALAMAT')))
   const kodePpk = ref(read('KODE_PPK')) // kode faskes klinik di BPJS
+  const noSipa = ref(read('no_sipa')) // SIPA apoteker (m_login.NO_SIPA)
   const lastActivity = ref(readNumber('last_activity'))
 
   const isLoggedIn = computed(() => !!idClient.value)
+
+  // Hak akses menu: { role: 'admin' | 'user', akses: [kunci menu] } — dari m_login.ROLES (lihat config/akses.js)
+  const hakAkses = ref(readAkses())
+  const isAdmin = computed(() => hakAkses.value?.role === ROLE_ADMIN)
+  const kunciAdminOnly = new Set(semuaItemMenu().filter((m) => m.adminOnly).map((m) => m.key))
+
+  /** true jika pengguna boleh membuka menu/route dengan kunci ini. Tanpa data hak akses: hanya Dashboard. */
+  function bolehAkses(key) {
+    if (!key || KEY_SELALU.includes(key)) return true
+    const h = hakAkses.value
+    if (!h) return false
+    if (h.role === ROLE_ADMIN) return true
+    return h.role === ROLE_USER && !kunciAdminOnly.has(key) && h.akses.includes(key)
+  }
+
+  /** Ambil hak akses akun yang sedang login dari daftar pengguna (login tidak mengembalikan ROLES). */
+  async function muatHakAkses() {
+    try {
+      const daftar = await getDaftarPengguna()
+      const saya = daftar.find((p) => String(p.NIP ?? '').trim().toLowerCase() === String(userId.value ?? '').trim().toLowerCase())
+      if (!saya) return // akun tidak ditemukan: pertahankan data yang ada
+      noSipa.value = String(saya.NO_SIPA ?? '').trim() || null
+      localStorage.setItem('no_sipa', noSipa.value || '')
+      hakAkses.value = parseRoles(saya.ROLES)
+      localStorage.setItem('hak_akses', JSON.stringify(hakAkses.value))
+    } catch {
+      /* gagal memuat: pakai hak akses tersimpan (jika ada) */
+    }
+  }
 
   /** Catat waktu aktivitas terakhir (dipanggil saat navigasi/interaksi user). */
   function touchActivity() {
@@ -107,7 +153,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
     touchActivity()
 
-    await loadProfile()
+    await Promise.all([loadProfile(), muatHakAkses()])
     return u
   }
 
@@ -117,11 +163,15 @@ export const useAuthStore = defineStore('auth', () => {
       const p = await http.get(`/index.php/api/Data_referensi/get_profile_rs/${idClient.value}`)
       if (!p) return
       if (p.NAMA_RS) company.value = p.NAMA_RS
+      companyApotek.value = p.NAMA_RS_2 || null
       logo.value = p.LINK_LOGO || null
-      alamat.value = p.ALAMAT || null
+      logo2.value = p.LINK_LOGO2 || null
+      alamat.value = rapikanAlamat(p.ALAMAT) || null
       kodePpk.value = p.KODE_PPK || null
       localStorage.setItem('NAMA_RS', company.value || '')
+      localStorage.setItem('NAMA_RS_2', companyApotek.value || '')
       localStorage.setItem('LINK_LOGO', logo.value || '')
+      localStorage.setItem('LINK_LOGO2', logo2.value || '')
       localStorage.setItem('ALAMAT', alamat.value || '')
       localStorage.setItem('KODE_PPK', kodePpk.value || '')
     } catch {
@@ -137,10 +187,14 @@ export const useAuthStore = defineStore('auth', () => {
     idLokasi.value = null
     kdDokter.value = null
     company.value = null
+    companyApotek.value = null
     logo.value = null
+    logo2.value = null
     alamat.value = null
     kodePpk.value = null
     lastActivity.value = null
+    hakAkses.value = null
+    noSipa.value = null
     try {
       KEYS.forEach((k) => localStorage.removeItem(k))
     } catch {
@@ -149,7 +203,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   return {
-    user, token, idClient, userId, idLokasi, kdDokter, company, logo, alamat, kodePpk,
-    isLoggedIn, initials, login, logout, loadProfile, touchActivity, isSessionExpired
+    user, token, idClient, userId, idLokasi, kdDokter, company, companyApotek, logo, logo2, logoKlinik, alamat, kodePpk, noSipa,
+    isLoggedIn, initials, hakAkses, isAdmin, bolehAkses, muatHakAkses, login, logout, loadProfile, touchActivity, isSessionExpired
   }
 })

@@ -1,5 +1,5 @@
 import { definePreset } from '@primeuix/themes'
-import Aura from '@primeuix/themes/aura'
+import Aura from '@primeuix/themes/nora'
 
 /**
  * Preset tema klinik: turunan Aura dengan warna primer teal.

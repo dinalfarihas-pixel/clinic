@@ -5,6 +5,7 @@ import {
   getSuku,
   getYonif,
   searchDesa,
+  getDesaById,
   getPasienLokal,
   getPesertaBpjsByNoka,
   generateNoRm,
@@ -17,7 +18,10 @@ const visible = defineModel('visible', { type: Boolean, default: false })
 
 const props = defineProps({
   // Data awal (mis. peserta BPJS yang ditemukan tetapi belum punya RM)
-  prefill: { type: Object, default: null }
+  prefill: { type: Object, default: null },
+  // Mode edit: ubah data pasien yang sudah ada (No. RM di `norm`), sama seperti mode 2 di SIMRS
+  edit: { type: Boolean, default: false },
+  norm: { type: String, default: '' }
 })
 
 const emit = defineEmits(['saved'])
@@ -46,15 +50,21 @@ const listStatus = [
   { kode: '2', nama: 'KAWIN' },
   { kode: '3', nama: 'JANDA/DUDA' }
 ]
+
 const pekerjaanOptions = [
   { kode: '1', label: 'PNS' },
   { kode: '2', label: 'POLRI' },
-  { kode: '7', label: 'TNI' },
   { kode: '3', label: 'SWASTA' },
   { kode: '4', label: 'BUMN' },
   { kode: '5', label: 'MAHASISWA' },
-  { kode: '6', label: 'TIDAK/BELUM BEKERJA' }
-]
+  { kode: '6', label: 'TIDAK/BELUM BEKERJA' },
+  { kode: '7', label: 'TNI' },
+  { kode: '10', label: 'WIRASWASTA' },
+  { kode: '11', label: 'BURUH' },
+  { kode: '12', label: 'PENSIUNAN' },
+  { kode: '17', label: 'PETANI/PEKEBUN' },
+  { kode: '18', label: 'NELAYAN/PEMELIHARA IKAN' }
+] 
 const hubunganTNIOptions = [
   { kode: '1', label: 'Diri Sendiri' },
   { kode: '2', label: 'Suami' },
@@ -100,6 +110,10 @@ function emptyForm() {
 }
 
 const form = ref(emptyForm())
+const idPasien = ref(null)
+const originalRm = ref('')
+const originalNoka = ref('')
+const loadingData = ref(false)
 const errors = ref({})
 const saving = ref(false)
 
@@ -125,6 +139,52 @@ function applyPrefill(p) {
   hakKelasBpjs.value = p.noKartu ? p.hakKelas?.kode || null : null
 }
 
+// Isi form dari data pasien lokal (GetDataPasien_v3) untuk mode edit
+async function muatPasien(norm) {
+  loadingData.value = true
+  try {
+    const p = await getPasienLokal(MODE_CARI.NO_RM, norm)
+    if (!p) {
+      toast.add({ severity: 'error', summary: 'Data tidak ditemukan', detail: `Pasien RM ${norm} tidak ada di data lokal.`, life: 4000 })
+      visible.value = false
+      return
+    }
+    const desa = await getDesaById(p.KDKELURAHAN).catch(() => null)
+    if (desa) listDesa.value = [desa]
+    const tgl = parseTanggal(p.TGLLAHIR)
+    idPasien.value = p.IDPASIEN
+    originalRm.value = String(p.NOMR || norm)
+    originalNoka.value = p.NO_KARTU || ''
+    form.value = {
+      rm: originalRm.value,
+      nama_pasien: p.NAMAPASIEN || '',
+      nik: p.NOKTP || '',
+      noka: p.NO_KARTU || '',
+      hakKelas: hakKelasList.find((x) => x.kode === p.Kelas) || null,
+      tanggal_lahir: tgl,
+      usia: hitungUmurTahun(tgl),
+      jeniskelamin: p.JENISKELAMIN === 'L' ? 'LAKI-LAKI' : p.JENISKELAMIN === 'P' ? 'PEREMPUAN' : '',
+      status_perkawinan: listStatus.find((x) => x.kode === p.STATUS) || null,
+      desaselected: desa,
+      no_telp: p.NOTELP || '',
+      alamat: p.TEMPAT || '',
+      pendidikan: listPendidikan.find((x) => x.kode === p.PENDIDIKAN) || null,
+      pekerjaan: pekerjaanOptions.find((x) => x.kode === p.PEKERJAAN) || null,
+      no_nrp: p.NO_NRP || '',
+      hubungan_tni_polri: hubunganTNIOptions.find((x) => x.kode === p.HUBUNGAN_TNI_POLRI) || null,
+      pangkat: p.PANGKAT || '',
+      satuan: listYonif.value.find((x) => x.nama_yonif === p.SATUAN) || p.SATUAN || null,
+      suku: listSuku.value.find((x) => x.id_suku === p.SUKU) || null,
+      agama: listAgama.find((x) => x.kode === p.AGAMA) || null
+    }
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Gagal memuat data pasien', detail: err.message, life: 5000 })
+    visible.value = false
+  } finally {
+    loadingData.value = false
+  }
+}
+
 // ── Tanggal lahir ↔ usia ─────────────────────────────────────
 // Usia dihitung dari tanggal lahir; tanggal hanya diperkirakan saat usia diketik manual
 function onTanggalLahir(value) {
@@ -144,11 +204,12 @@ const nokaCheck = ref({ status: 'idle', data: null })
 const rmTimerRef = { t: null }
 const nokaTimerRef = { t: null }
 
-function watchDuplicate(getter, state, mode, timerRef) {
+function watchDuplicate(getter, state, mode, timerRef, original) {
   watch(getter, (value) => {
     clearTimeout(timerRef.t)
     const v = (value || '').trim()
-    if (!v) {
+    // Saat edit, nilai yang belum diubah milik pasien itu sendiri tidak perlu dicek
+    if (!v || (props.edit && v === (original() || '').trim())) {
       state.value = { status: 'idle', data: null }
       return
     }
@@ -163,11 +224,18 @@ function watchDuplicate(getter, state, mode, timerRef) {
     }, 500)
   })
 }
-watchDuplicate(() => form.value.rm, rmCheck, MODE_CARI.NO_RM, rmTimerRef)
-watchDuplicate(() => form.value.noka, nokaCheck, MODE_CARI.NO_KARTU, nokaTimerRef)
+watchDuplicate(() => form.value.rm, rmCheck, MODE_CARI.NO_RM, rmTimerRef, () => originalRm.value)
+watchDuplicate(() => form.value.noka, nokaCheck, MODE_CARI.NO_KARTU, nokaTimerRef, () => originalNoka.value)
 
 const generatingRm = ref(false)
 async function buatRmBaru() {
+  // Mode edit: kembalikan ke No. RM semula milik pasien
+  if (props.edit) {
+    clearTimeout(rmTimerRef.t)
+    form.value.rm = originalRm.value
+    rmCheck.value = { status: 'idle', data: null }
+    return
+  }
   generatingRm.value = true
   try {
     form.value.rm = await generateNoRm()
@@ -286,18 +354,25 @@ async function simpan() {
 
   saving.value = true
   try {
-    // Bentuk payload sama dengan SIMRS (inputPasienMode5), mode 1 = pasien baru
+    // Bentuk payload sama dengan SIMRS (inputPasienMode5), mode 1 = pasien baru, 2 = edit
     const { no_rm, message } = await simpanPasien({
       ...form.value,
-      mode: 1,
+      mode: props.edit ? 2 : 1,
+      ...(props.edit ? { id_pasien: idPasien.value } : {}),
       rm: form.value.rm.trim(),
       nama_pasien: form.value.nama_pasien.trim(),
       nik: form.value.nik.trim(),
       noka: form.value.noka.trim(),
       tanggal_lahir: toYmd(form.value.tanggal_lahir)
     })
-    toast.add({ severity: 'success', summary: 'Pasien tersimpan', detail: message || `No. RM ${no_rm}`, life: 4000 })
-    emit('saved', no_rm)
+    const rmFinal = no_rm || form.value.rm.trim()
+    toast.add({
+      severity: 'success',
+      summary: props.edit ? 'Data pasien diperbarui' : 'Pasien tersimpan',
+      detail: message || `No. RM ${rmFinal}`,
+      life: 4000
+    })
+    emit('saved', rmFinal)
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Gagal menyimpan', detail: err.message, life: 5000 })
   } finally {
@@ -323,7 +398,12 @@ watch(visible, async (open) => {
   errors.value = {}
   hakKelasBpjs.value = null
   listDesa.value = []
-  applyPrefill(props.prefill)
+  idPasien.value = null
+  originalRm.value = ''
+  originalNoka.value = ''
+  rmCheck.value = { status: 'idle', data: null }
+  nokaCheck.value = { status: 'idle', data: null }
+  if (!props.edit) applyPrefill(props.prefill)
 
   if (!refLoaded) {
     const [suku, yonif] = await Promise.allSettled([getSuku(), getYonif()])
@@ -331,6 +411,11 @@ watch(visible, async (open) => {
     else toast.add({ severity: 'error', summary: 'Gagal memuat data suku', detail: suku.reason?.message, life: 5000 })
     if (yonif.status === 'fulfilled') listYonif.value = yonif.value
     refLoaded = suku.status === 'fulfilled'
+  }
+
+  if (props.edit) {
+    await muatPasien(props.norm)
+    return
   }
 
   // No. kartu BPJS terisi dari pencarian tapi datanya belum lengkap (pasien belum ditemukan
@@ -348,13 +433,14 @@ onBeforeUnmount(() => {
 <template>
   <Dialog
     v-model:visible="visible"
-    header="Registrasi pasien baru"
+    :header="edit ? `Edit data pasien — RM ${norm}` : 'Registrasi pasien baru'"
     modal
     :closable="!saving"
     :style="{ width: '60rem' }"
     :breakpoints="{ '1199px': '85vw', '575px': '96vw' }"
   >
-    <form class="pasien-form" @submit.prevent="simpan" @keydown.enter="onEnter">
+    <div v-if="loadingData" class="loading"><ProgressSpinner style="width: 2.5rem; height: 2.5rem" /></div>
+    <form v-show="!loadingData" class="pasien-form" @submit.prevent="simpan" @keydown.enter="onEnter">
       <!-- Data pribadi -->
       <section class="section">
         <h3 class="section__title"><i class="pi pi-user" />Data pribadi</h3>
@@ -366,7 +452,7 @@ onBeforeUnmount(() => {
                 <InputText
                   id="pb-rm"
                   v-model="form.rm"
-                  placeholder="Kosongkan agar dibuat otomatis"
+                  :placeholder="edit ? 'No. rekam medis' : 'Kosongkan agar dibuat otomatis'"
                   :invalid="rmCheck.status === 'taken'"
                   fluid
                 />
@@ -379,8 +465,8 @@ onBeforeUnmount(() => {
                 severity="secondary"
                 outlined
                 :loading="generatingRm"
-                v-tooltip.top="'Buat No. RM baru'"
-                aria-label="Buat No. RM baru"
+                v-tooltip.top="edit ? 'Gunakan RM semula' : 'Buat No. RM baru'"
+                :aria-label="edit ? 'Gunakan RM semula' : 'Buat No. RM baru'"
                 @click="buatRmBaru"
               />
             </div>
@@ -389,7 +475,7 @@ onBeforeUnmount(() => {
               Sudah dipakai oleh <strong>{{ rmCheck.data?.NAMAPASIEN }}</strong>
               <template v-if="rmCheck.data?.TGLLAHIR"> (lahir {{ rmCheck.data.TGLLAHIR }})</template>
             </small>
-            <small v-else class="hint">Jika dikosongkan, sistem membuat No. RM otomatis.</small>
+            <small v-else-if="!edit" class="hint">Jika dikosongkan, sistem membuat No. RM otomatis.</small>
           </div>
 
           <div class="field">
@@ -605,6 +691,7 @@ onBeforeUnmount(() => {
               v-model="form.pekerjaan"
               inputId="pb-pekerjaan"
               :options="pekerjaanOptions"
+              filter
               optionLabel="label"
               placeholder="Pilih pekerjaan"
               :invalid="!!errors.pekerjaan"
@@ -685,12 +772,23 @@ onBeforeUnmount(() => {
 
     <template #footer>
       <Button label="Batal" severity="secondary" outlined :disabled="saving" @click="visible = false" />
-      <Button label="Simpan pasien" icon="pi pi-save" :loading="saving" @click="simpan" />
+      <Button
+        :label="edit ? 'Simpan perubahan' : 'Simpan pasien'"
+        icon="pi pi-save"
+        :loading="saving"
+        :disabled="loadingData"
+        @click="simpan"
+      />
     </template>
   </Dialog>
 </template>
 
 <style scoped>
+.loading {
+  display: grid;
+  place-items: center;
+  padding: 3rem 0;
+}
 .pasien-form {
   display: grid;
   gap: 1.5rem;

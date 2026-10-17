@@ -3,12 +3,16 @@ import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import { useConfirm } from 'primevue/useconfirm'
-import { getPendaftaran, OPSI_CARA_KELUAR, simpanTindakLanjut } from '@/services/pendaftaran'
+import { getPendaftaran, CARA_KELUAR, OPSI_CARA_KELUAR, simpanTindakLanjut } from '@/services/pendaftaran'
 import { getSoap, simpanSoap, cariKeluhanSnomed, getRiwayatSoap, TINGKAT_KESADARAN, OPSI_PLAN } from '@/services/soap'
 import { getUserId } from '@/services/session'
 import { formatTanggal } from '@/utils/tanggal'
 import TerapiObat from './components/TerapiObat.vue'
 import OdontogramForm from './components/OdontogramForm.vue'
+import TindakanForm from './components/TindakanForm.vue'
+import DiagnosaForm from './components/DiagnosaForm.vue'
+import RujukRsLainForm from './components/RujukRsLainForm.vue'
+import DaftarRujukanDialog from './components/DaftarRujukanDialog.vue'
 
 const activeTab = ref('0')
 
@@ -290,7 +294,8 @@ const isPoliGigi = computed(() => {
 })
 
 // ── Tindak lanjut (disposisi setelah selesai diperiksa) ───────
-const showTindakLanjut = ref(false)
+const rujukForm = ref(null)
+const showDaftarRujukan = ref(false)
 const caraKeluarDipilih = ref(null)
 const savingTindakLanjut = ref(false)
 
@@ -298,8 +303,7 @@ const sudahTindakLanjut = computed(() => Number(kunjungan.value?.STATUS) > 0)
 const labelTindakLanjut = computed(() => kunjungan.value?.KETERANGAN || '')
 
 function bukaTindakLanjut() {
-  caraKeluarDipilih.value = null
-  showTindakLanjut.value = true
+  activeTab.value = '5'
 }
 
 async function simpanTindakLanjutForm() {
@@ -309,8 +313,13 @@ async function simpanTindakLanjutForm() {
   }
   savingTindakLanjut.value = true
   try {
-    await simpanTindakLanjut(kunjungan.value, caraKeluarDipilih.value, getUserId())
-    showTindakLanjut.value = false
+    // Rujuk RS lain: rujukan (BPJS) / surat rujukan (non-BPJS) dibuat dulu; bila gagal, status tindak lanjut tidak diubah
+    if (caraKeluarDipilih.value === CARA_KELUAR.RUJUK_RS_LAIN) {
+      if (!(await rujukForm.value?.submit())) return
+      // Backend sudah mengubah status pulang menjadi 2 saat rujukan diterbitkan, jadi tidak disimpan lagi
+    } else {
+      await simpanTindakLanjut(kunjungan.value, caraKeluarDipilih.value, getUserId())
+    }
     toast.add({ severity: 'success', summary: 'Tindak lanjut tersimpan', detail: kunjungan.value?.NAMAPASIEN, life: 3500 })
     kunjungan.value = await getPendaftaran(noReg)
   } catch (err) {
@@ -428,7 +437,10 @@ onBeforeUnmount(() => {
             <TabList>
               <Tab value="0"><i class="pi pi-file-edit" /> Pemeriksaan</Tab>
               <Tab v-if="isPoliGigi" value="2"><i class="pi pi-face-smile" /> Odontogram</Tab>
+              <Tab value="4"><i class="pi pi-bookmark" /> Diagnosa (ICD)</Tab>
+              <Tab value="3"><i class="pi pi-wrench" /> Tindakan</Tab>
               <Tab value="1"><i class="pi pi-pills" /> Terapi / Obat-obatan</Tab>
+              <Tab value="5"><i class="pi pi-send" /> Tindak Lanjut</Tab>
             </TabList>
             <TabPanels>
               <TabPanel value="0">
@@ -609,11 +621,50 @@ onBeforeUnmount(() => {
           </section>
                 </div>
               </TabPanel>
+              <TabPanel value="4">
+                <DiagnosaForm v-if="kunjungan" :datapasien="kunjungan" />
+              </TabPanel>
+              <TabPanel value="3">
+                <TindakanForm v-if="kunjungan" :datapasien="kunjungan" />
+              </TabPanel>
               <TabPanel value="1">
                 <TerapiObat v-if="kunjungan" :datapasien="kunjungan" />
               </TabPanel>
               <TabPanel v-if="isPoliGigi" value="2">
                 <OdontogramForm v-if="kunjungan" :datapasien="kunjungan" />
+              </TabPanel>
+              <TabPanel value="5">
+                <div class="tab-content">
+                  <section class="panel">
+                    <header class="panel__header">
+                      <h2 class="panel__title"><i class="pi pi-send" /> Tindak lanjut pasien</h2>
+                    </header>
+                    <p class="muted" style="margin-top: 0">Tentukan apa yang terjadi setelah pasien selesai diperiksa.</p>
+                    <div class="tindaklanjut-opsi" role="radiogroup" aria-label="Tindak lanjut pasien">
+                      <label
+                        v-for="opsi in OPSI_CARA_KELUAR"
+                        :key="opsi.kode"
+                        :for="`tl-${opsi.kode}`"
+                        class="tl-opsi"
+                        :class="{ 'tl-opsi--on': caraKeluarDipilih === opsi.kode }"
+                      >
+                        <RadioButton v-model="caraKeluarDipilih" :inputId="`tl-${opsi.kode}`" name="tindak-lanjut" :value="opsi.kode" />
+                        <i :class="opsi.icon" />
+                        <span>{{ opsi.label }}</span>
+                      </label>
+                    </div>
+                    <template v-if="caraKeluarDipilih === CARA_KELUAR.RUJUK_RS_LAIN && kunjungan">
+                      <RujukRsLainForm ref="rujukForm" :kunjungan="kunjungan" />
+                    </template>
+                    <Message v-if="sudahTindakLanjut" severity="warn" icon="pi pi-exclamation-triangle" class="tl-warn">
+                      Kunjungan ini sudah ditandai "{{ labelTindakLanjut }}" sebelumnya. Menyimpan lagi akan menimpa status tersebut.
+                    </Message>
+                    <div class="tl-actions">
+                      <Button label="Daftar rujukan" icon="pi pi-list" severity="secondary" outlined @click="showDaftarRujukan = true" />
+                      <Button label="Simpan" icon="pi pi-check" :loading="savingTindakLanjut" @click="simpanTindakLanjutForm" />
+                    </div>
+                  </section>
+                </div>
               </TabPanel>
             </TabPanels>
           </Tabs>
@@ -631,30 +682,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <!-- Dialog: Tindak lanjut -->
-      <Dialog v-model:visible="showTindakLanjut" modal header="Tindak Lanjut Pasien" :style="{ width: '28rem', maxWidth: '96vw' }" :closable="!savingTindakLanjut">
-        <p class="muted" style="margin-top: 0">Tentukan apa yang terjadi setelah pasien selesai diperiksa.</p>
-        <div class="tindaklanjut-opsi">
-          <button
-            v-for="opsi in OPSI_CARA_KELUAR"
-            :key="opsi.kode"
-            type="button"
-            class="tl-opsi"
-            :class="{ 'tl-opsi--on': caraKeluarDipilih === opsi.kode }"
-            @click="caraKeluarDipilih = opsi.kode"
-          >
-            <i :class="opsi.icon" />
-            <span>{{ opsi.label }}</span>
-          </button>
-        </div>
-        <Message v-if="sudahTindakLanjut" severity="warn" icon="pi pi-exclamation-triangle" class="tl-warn">
-          Kunjungan ini sudah ditandai "{{ labelTindakLanjut }}" sebelumnya. Menyimpan lagi akan menimpa status tersebut.
-        </Message>
-        <template #footer>
-          <Button label="Batal" severity="secondary" outlined :disabled="savingTindakLanjut" @click="showTindakLanjut = false" />
-          <Button label="Simpan" icon="pi pi-check" :loading="savingTindakLanjut" @click="simpanTindakLanjutForm" />
-        </template>
-      </Dialog>
+      <DaftarRujukanDialog v-model:visible="showDaftarRujukan" :norm="String(kunjungan?.NOMR || '')" />
 
       <!-- Dialog: Riwayat kunjungan -->
       <Dialog v-model:visible="showRiwayat" modal header="Riwayat Kunjungan" :style="{ width: '1100px', maxWidth: '96vw' }">
@@ -1024,19 +1052,18 @@ onBeforeUnmount(() => {
   }
 }
 
-/* Dialog: Tindak lanjut */
+/* Tab: Tindak lanjut */
 .tindaklanjut-opsi {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
   gap: 0.625rem;
   margin-bottom: 0.75rem;
 }
 .tl-opsi {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 0.375rem;
-  padding: 0.875rem 0.5rem;
+  gap: 0.625rem;
+  padding: 0.875rem 1rem;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
   background: var(--app-panel);
@@ -1062,6 +1089,12 @@ onBeforeUnmount(() => {
 }
 .tl-warn {
   margin-top: 0.5rem;
+}
+.tl-actions {
+  gap: 0.5rem;
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1rem;
 }
 
 /* Action bar */

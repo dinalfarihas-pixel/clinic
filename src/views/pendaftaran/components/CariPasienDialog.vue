@@ -8,7 +8,7 @@ defineProps({
   loading: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['cari', 'pasien-baru', 'lanjut'])
+const emit = defineEmits(['cari', 'pasien-baru', 'edit', 'lanjut'])
 
 const modeOptions = [
   { label: 'No. RM', value: 'rm', placeholder: 'Contoh: 000231' },
@@ -90,6 +90,14 @@ function cari() {
 
     <template #footer>
       <Button label="Pasien baru" icon="pi pi-user-plus" severity="secondary" outlined @click="emit('pasien-baru')" />
+      <Button
+        label="Edit pasien"
+        icon="pi pi-pencil"
+        severity="secondary"
+        outlined
+        :disabled="!pasien.noMR"
+        @click="emit('edit')"
+      />
       <Button
         label="Lanjutkan"
         icon="pi pi-arrow-right"

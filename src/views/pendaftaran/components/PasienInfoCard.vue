@@ -5,6 +5,8 @@ const props = defineProps({
   pasien: { type: Object, required: true }
 })
 
+const emit = defineEmits(['edit'])
+
 const hasPasien = computed(() => !!props.pasien.nama)
 const isAktif = computed(() => props.pasien.statusPeserta?.keterangan === 'AKTIF')
 
@@ -26,6 +28,15 @@ const rows = computed(() => [
   <section class="panel pasien-card">
     <header class="panel__header">
       <h2 class="panel__title">Informasi pasien</h2>
+      <Button
+        v-if="pasien.noMR"
+        label="Edit"
+        icon="pi pi-pencil"
+        size="small"
+        severity="secondary"
+        outlined
+        @click="emit('edit')"
+      />
     </header>
 
     <div class="identity" :class="{ 'identity--empty': !hasPasien }">
@@ -71,6 +82,10 @@ const rows = computed(() => [
 }
 .pasien-card .panel__header {
   padding: 1rem 1.25rem 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 
 .identity {

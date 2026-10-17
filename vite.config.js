@@ -5,7 +5,7 @@ import Components from 'unplugin-vue-components/vite'
 import { PrimeVueResolver } from '@primevue/auto-import-resolver'
 
 export default defineConfig({
-  base: '',//'/coreclinic/',
+  base: '/coreclinic/',
   plugins: [
     vue(),
     // Komponen PrimeVue (Button, DataTable, dll) otomatis ter-import saat dipakai di template

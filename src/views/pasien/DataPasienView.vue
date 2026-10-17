@@ -6,6 +6,7 @@ import { useConfirm } from 'primevue/useconfirm'
 import { JENIS_CARI, cariPasien, hapusPasien } from '@/services/pasien'
 import { getRiwayatSoap } from '@/services/soap'
 import { formatTanggal } from '@/utils/tanggal'
+import PasienBaruDialog from '@/views/pendaftaran/components/PasienBaruDialog.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -72,6 +73,51 @@ async function salin(teks, label) {
 
 function daftarkan(p) {
   router.push({ name: 'pendaftaran', query: { norm: p.NOMR } })
+}
+
+// Pasien baru — kata kunci pencarian dipakai sebagai isian awal form
+const showPasienBaru = ref(false)
+const prefillPasienBaru = ref(null)
+const modeEdit = ref(false)
+const normEdit = ref("")
+
+function editPasien(p) {
+  modeEdit.value = true
+  normEdit.value = String(p.NOMR)
+  prefillPasienBaru.value = null
+  showPasienBaru.value = true
+}
+
+function pasienBaru() {
+  modeEdit.value = false
+  const q = terakhir.value
+  const kunci = q?.keyword || ''
+  const digits = kunci.replace(/\D/g, '')
+  const kosong = { nama: '', nik: '', noKartu: '' }
+  if (q?.jenis === 'nama') prefillPasienBaru.value = { ...kosong, nama: kunci }
+  else if (q?.jenis === 'nikoka') {
+    if (digits.length === 16) prefillPasienBaru.value = { ...kosong, nik: digits }
+    else if (digits.length === 13) prefillPasienBaru.value = { ...kosong, noKartu: digits }
+    else prefillPasienBaru.value = null
+  }
+  else prefillPasienBaru.value = null
+  showPasienBaru.value = true
+}
+
+function onPasienBaruSaved(noRm) {
+  showPasienBaru.value = false
+  // Edit: ulangi pencarian terakhir agar daftar hasil tetap utuh dan datanya terbaru
+  if (modeEdit.value) {
+    cari(true)
+    return
+  }
+  toast.add({ severity: 'success', summary: 'Pasien baru tersimpan', detail: noRm ? `No. RM ${noRm}` : '', life: 3000 })
+  // Muat ulang dengan No. RM baru agar langsung tampil dan bisa didaftarkan
+  if (noRm) {
+    jenis.value = 'nomr'
+    keyword.value = String(noRm)
+    cari()
+  }
 }
 
 // Riwayat kunjungan (SOAP lengkap — sama seperti dialog "Riwayat Kunjungan" di halaman Pemeriksaan)
@@ -253,7 +299,10 @@ function eksporCsv() {
             <i class="pi pi-users empty__icon" />
             <p v-if="!terakhir">Cari pasien berdasarkan nama, No. RM, NIK, atau No. BPJS.</p>
             <p v-else-if="pasien.length">Tidak ada pasien yang cocok dengan saringan.</p>
-            <p v-else>Pasien tidak ditemukan. Periksa kembali kata kunci.</p>
+            <template v-else>
+              <p>Pasien tidak ditemukan. Periksa kembali kata kunci, atau tambahkan sebagai pasien baru.</p>
+              <Button label="Pasien baru" icon="pi pi-user-plus" class="empty__aksi" @click="pasienBaru" />
+            </template>
           </div>
         </template>
 
@@ -304,10 +353,20 @@ function eksporCsv() {
             <span v-else class="muted">—</span>
           </template>
         </Column>
-        <Column header="Aksi" frozen alignFrozen="right" style="width: 12rem">
+        <Column header="Aksi" frozen alignFrozen="right" style="width: 14rem">
           <template #body="{ data: p }">
             <div class="actions">
               <Button label="Daftarkan" icon="pi pi-user-plus" size="small" @click="daftarkan(p)" />
+              <Button
+                icon="pi pi-pencil"
+                text
+                rounded
+                severity="secondary"
+                size="small"
+                aria-label="Edit data pasien"
+                v-tooltip.top="'Edit data pasien'"
+                @click="editPasien(p)"
+              />
               <Button
                 icon="pi pi-history"
                 text
@@ -334,6 +393,14 @@ function eksporCsv() {
         </Column>
       </DataTable>
     </section>
+
+    <PasienBaruDialog
+      v-model:visible="showPasienBaru"
+      :prefill="prefillPasienBaru"
+      :edit="modeEdit"
+      :norm="normEdit"
+      @saved="onPasienBaruSaved"
+    />
 
     <!-- Riwayat kunjungan (SOAP) -->
     <Dialog
@@ -482,6 +549,9 @@ function eksporCsv() {
 }
 .empty p {
   margin: 0;
+}
+.empty__aksi {
+  margin-top: 0.875rem;
 }
 .empty-sm {
   margin: 0;

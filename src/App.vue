@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useLayoutStore } from '@/stores/layout'
 import { useAuthStore } from '@/stores/auth'
@@ -17,6 +17,31 @@ function checkSessionExpiry() {
     router.replace({ name: 'login' })
   }
 }
+
+// Ikon tab browser mengikuti logo klinik dari profil; kembali ke favicon bawaan jika kosong/gagal dimuat
+const DEFAULT_FAVICON = '/favicon.svg'
+function setFavicon(href) {
+  let link = document.querySelector('link[rel~="icon"]')
+  if (!link) {
+    link = document.createElement('link')
+    link.rel = 'icon'
+    document.head.appendChild(link)
+  }
+  link.removeAttribute('type')
+  link.href = href
+}
+
+watch(
+  () => auth.logoKlinik,
+  (logo) => {
+    if (!logo) return setFavicon(DEFAULT_FAVICON)
+    const img = new Image()
+    img.onload = () => setFavicon(logo)
+    img.onerror = () => setFavicon(DEFAULT_FAVICON)
+    img.src = logo
+  },
+  { immediate: true }
+)
 
 let activityThrottled = false
 function onUserActivity() {

@@ -34,9 +34,12 @@ const showError = (detail) => toast.add({ severity: 'error', summary: 'Gagal', d
 // ── Item resep berjalan ──────────────────────────────────────
 const selectedObatObatan = ref([])
 
-const _isRacikanParent = (item) => item.JENIS_R === 'R/' && String(item.BARCODE ?? '').trim() === '00000' && String(item.AS_PARENT ?? '') === '1'
-const _isRacikanChild = (item) => item.JENIS_R === '' && String(item.BARCODE ?? '').trim() === '00000' && String(item.AS_PARENT ?? '') === '0'
+// Racikan = 1 baris induk (AS_PARENT 1, barcode 00000) + baris bahan di bawahnya, diikat RACIKAN_GROUP_ID.
+// Bahan bisa obat dari master (barcode asli, ikut diminta ke apotek) atau teks bebas (barcode 00000).
+const _isRacikanParent = (item) => !!item.RACIKAN_GROUP_ID && String(item.AS_PARENT ?? '') === '1'
+const _isRacikanChild = (item) => !!item.RACIKAN_GROUP_ID && String(item.AS_PARENT ?? '') !== '1'
 const _isRacikan = (item) => _isRacikanParent(item) || _isRacikanChild(item)
+const bahanRacikan = (parent) => selectedObatObatan.value.filter((o) => o.RACIKAN_GROUP_ID === parent.RACIKAN_GROUP_ID && _isRacikanChild(o))
 
 const getRowClass = (data) => {
   if (_isRacikanParent(data)) return 'row-racikan-parent'
@@ -55,10 +58,13 @@ function addItem(item, mode = 1) {
     showWarning('Nama obat tidak boleh kosong')
     return
   }
+  selectedObatObatan.value.push(buatBaris(item, mode))
+}
 
- 
+/** Bentuk baris detail resep (payload insert_sales_v3). mode 1 = item resep (R/), 2 = bahan racikan. */
+function buatBaris(item, mode = 1) {
   if (mode === 1) item.JENIS_R = 'R/'
-  selectedObatObatan.value.push({
+  return {
     BARCODE: item.BARCODE || '00000',
     ID_BARANG: item.BARCODE || '00000',
     JENIS_R: item.JENIS_R || '',
@@ -95,7 +101,7 @@ function addItem(item, mode = 1) {
     TANGGAL_TRANS: formatDateTime(),
     JML_RACIK: 0,
     RACIKAN_GROUP_ID: item.RACIKAN_GROUP_ID || ''
-  }) 
+  }
 }
 
 function removeItem(index, item) {
@@ -138,9 +144,12 @@ function clearAllItems() {
   })
 }
 
-const totalAmount = computed(() =>
-  selectedObatObatan.value.reduce((total, item) => total + (parseFloat(item.QTY) || 0) * (parseFloat(item.HARGA) || 0), 0)
-)
+const nilaiBaris = (item) => (parseFloat(item.QTY) || 0) * (parseFloat(item.HARGA) || 0)
+const totalAmount = computed(() => selectedObatObatan.value.reduce((total, item) => total + nilaiBaris(item), 0))
+// Induk racikan menampilkan total bahannya; nilainya sendiri 0 sehingga total resep tidak terhitung dua kali
+const subtotalBaris = (item) => (_isRacikanParent(item) ? bahanRacikan(item).reduce((t, b) => t + nilaiBaris(b), 0) : nilaiBaris(item))
+// Satu racikan dihitung satu item, bahannya tidak dihitung terpisah
+const jumlahItem = computed(() => selectedObatObatan.value.filter((o) => !_isRacikanChild(o)).length)
 
 // ── Plafon (BPJS) ────────────────────────────────────────────
 const biayaPelayanan = ref({ OBATAN: 0, PLAFON_OBAT: 0 })
@@ -228,7 +237,8 @@ const showCaraPakaiObat = ref(false)
 const searchCaraPakai = ref('')
 const listCaraPakai = ref([])
 const indexCaraPakaiAktif = ref(null)
-const caraPakaiTarget = ref('item') // 'item' = isi REMARK_ITEM baris langsung, 'signa' = isi Petunjuk Pemakaian di dialog Signa
+// 'item' = isi REMARK_ITEM baris langsung, 'signa' = Petunjuk Pemakaian di dialog Signa, 'racikan' = Aturan pakai di dialog Racikan
+const caraPakaiTarget = ref('item')
 let caraPakaiTimer = null
 
 function openCaraPakaiDialog(index) {
@@ -239,12 +249,13 @@ function openCaraPakaiDialog(index) {
   showCaraPakaiObat.value = true
 }
 
-function bukaCaraPakaiUntukSigna() {
-  caraPakaiTarget.value = 'signa'
+function bukaCaraPakaiUntuk(target) {
+  caraPakaiTarget.value = target
   searchCaraPakai.value = ''
   listCaraPakai.value = []
   showCaraPakaiObat.value = true
 }
+const bukaCaraPakaiUntukSigna = () => bukaCaraPakaiUntuk('signa')
 
 function onSearchCaraPakai() {
   clearTimeout(caraPakaiTimer)
@@ -260,6 +271,11 @@ function onSearchCaraPakai() {
 function pilihCaraPakai(remark) {
   if (caraPakaiTarget.value === 'signa') {
     signaForm.value.petunjuk = remark
+    showCaraPakaiObat.value = false
+    return
+  }
+  if (caraPakaiTarget.value === 'racikan') {
+    racikanForm.value.caraPakai = remark
     showCaraPakaiObat.value = false
     return
   }
@@ -343,67 +359,118 @@ function konfirmasiSigna() {
 }
 
 // ── Obat racikan ─────────────────────────────────────────────
+const SATUAN_RACIKAN = ['Bungkus', 'Kapsul', 'Botol', 'Pot', 'Tube', 'Sachet']
 const showResepRacikan = ref(false)
-const TitleRacikan = ref('')
-const SatuanRacikan = ref('')
-const jumlQtyResepRacikan = ref(0)
-const itemResepRacikan = ref([])
+const racikanEditGroup = ref(null) // RACIKAN_GROUP_ID yang sedang diedit, null = racikan baru
 
-function handleQuantityInput() {
-  jumlQtyResepRacikan.value = parseInt(jumlQtyResepRacikan.value || 0, 10)
+// bahan[].obat: objek obat dari master (dipilih dari pencarian) atau teks bebas (bahan di luar master)
+const bahanKosong = () => ({ obat: null, dosis: '', qty: null })
+function racikanFormKosong() {
+  return { nama: '', qty: null, satuan: 'Bungkus', caraPakai: '', bahan: [bahanKosong()] }
+}
+const racikanForm = ref(racikanFormKosong())
+
+const bahanDariMaster = (b) => !!b.obat && typeof b.obat === 'object'
+const namaBahan = (b) => (bahanDariMaster(b) ? b.obat.CAPTION || b.obat.NAMA || '' : String(b.obat || '')).trim()
+const satuanBahan = (b) => (bahanDariMaster(b) ? b.obat.SATUAN || b.obat.SATUAN_KECIL || '' : '')
+const stokBahan = (b) => Math.max(0, Number(b.obat.QUNATITY ?? b.obat.QUANTITY ?? b.obat.PERSEDIAAN) || 0)
+const hargaBahan = (b) => Number(b.obat.HARGAJUAL ?? b.obat.HARGA) || 0
+
+const estimasiRacikan = computed(() =>
+  racikanForm.value.bahan.reduce((t, b) => t + (bahanDariMaster(b) ? hargaBahan(b) * (Number(b.qty) || 0) : 0), 0)
+)
+
+const saranBahan = ref([])
+async function cariBahan(event) {
+  try {
+    saranBahan.value = await cariObat(event.query.trim(), auth.idLokasi)
+  } catch {
+    saranBahan.value = []
+  }
 }
 
-function addItemRacik() {
-  itemResepRacikan.value.push({ NAMABARANG: '', JENIS_RESEP: 'RR' })
+function bukaRacikanBaru() {
+  racikanEditGroup.value = null
+  racikanForm.value = racikanFormKosong()
+  showResepRacikan.value = true
 }
 
-function removeItemRacikan(index) {
-  itemResepRacikan.value.splice(index, 1)
+function editRacikan(parent) {
+  racikanEditGroup.value = parent.RACIKAN_GROUP_ID
+  racikanForm.value = {
+    nama: parent.NAMA,
+    qty: Number(parent.QTY) || null,
+    satuan: parent.SATUAN || '',
+    caraPakai: parent.REMARK_ITEM || '',
+    bahan: bahanRacikan(parent).map((c) => ({
+      obat: String(c.BARCODE) === '00000' ? c.NAMA : { ...c, CAPTION: c.NAMA },
+      dosis: c.REMARK_ITEM || '',
+      qty: Number(c.QTY) || null
+    }))
+  }
+  showResepRacikan.value = true
 }
 
 function resetRacikanForm() {
-  TitleRacikan.value = ''
-  SatuanRacikan.value = ''
-  jumlQtyResepRacikan.value = 0
-  itemResepRacikan.value = []
+  racikanEditGroup.value = null
+  racikanForm.value = racikanFormKosong()
 }
 
 function simpanRacikan() {
-  if (!TitleRacikan.value.trim()) return showWarning('Nama racikan harus diisi')
-  if (itemResepRacikan.value.every((i) => !i.NAMABARANG.trim())) return showWarning('Minimal 1 item komposisi harus diisi')
+  const f = racikanForm.value
+  const bahan = f.bahan.filter((b) => namaBahan(b))
+  if (!f.nama.trim()) return showWarning('Nama racikan harus diisi')
+  if (!(Number(f.qty) > 0)) return showWarning('Jumlah racikan harus lebih dari 0')
+  if (!bahan.length) return showWarning('Minimal 1 bahan racikan harus diisi')
+  // Bahan dari master diminta ke apotek sebagai stok nyata, jadi jumlah totalnya wajib ada
+  const tanpaQty = bahan.find((b) => bahanDariMaster(b) && !(Number(b.qty) > 0))
+  if (tanpaQty) return showWarning(`Isi jumlah total untuk bahan "${namaBahan(tanpaQty)}"`)
 
-  const groupId = `RR_${Date.now()}`
-  addItem(
-    {
-      BARCODE: '00000',
-      NAMA: TitleRacikan.value.trim(),
-      AS_PARENT: 1,
-      JENIS_R: 'R/',
-      SATUAN: SatuanRacikan.value,
-      QTY: jumlQtyResepRacikan.value,
-      SATUAN_RACIK: SatuanRacikan.value,
-      RACIKAN_GROUP_ID: groupId
-    },
-    1
-  )
-  itemResepRacikan.value.forEach((item) => {
-    if (!item.NAMABARANG.trim()) return
-    addItem(
+  const satuan = (f.satuan || '').trim()
+  const groupId = racikanEditGroup.value || `RR_${Date.now()}`
+  const rows = [
+    buatBaris(
       {
         BARCODE: '00000',
-        NAMA: item.NAMABARANG,
-        JENIS_RESEP: item.JENIS_RESEP,
-        AS_PARENT: 0,
-        JENIS_R: '',
+        NAMA: f.nama.trim(),
+        AS_PARENT: 1,
+        SATUAN: satuan,
+        MEREK: satuan, // kolom yang dibaca farmasi (billv3) sebagai satuan tampilan
+        QTY: Number(f.qty),
+        SATUAN_RACIK: satuan,
+        REMARK_ITEM: f.caraPakai.trim(),
         RACIKAN_GROUP_ID: groupId
       },
-      2
+      1
+    ),
+    ...bahan.map((b) =>
+      buatBaris(
+        {
+          ...(bahanDariMaster(b) ? b.obat : { BARCODE: '00000' }),
+          NAMA: namaBahan(b),
+          QTY: bahanDariMaster(b) ? Number(b.qty) : 0,
+          AS_PARENT: 0,
+          JENIS_R: '',
+          REMARK_ITEM: b.dosis.trim(),
+          RACIKAN_GROUP_ID: groupId
+        },
+        2
+      )
     )
-  })
+  ]
 
-  resetRacikanForm()
+  const list = selectedObatObatan.value
+  const posisi = list.findIndex((o) => o.RACIKAN_GROUP_ID === groupId)
+  if (posisi === -1) {
+    list.push(...rows)
+  } else {
+    // Edit: ganti racikan lama di posisi yang sama
+    selectedObatObatan.value = [...list.slice(0, posisi), ...rows, ...list.slice(posisi).filter((o) => o.RACIKAN_GROUP_ID !== groupId)]
+  }
+
+  const diedit = posisi !== -1
   showResepRacikan.value = false
-  showSuccess('Resep racikan berhasil ditambahkan')
+  showSuccess(diedit ? 'Racikan diperbarui' : 'Resep racikan berhasil ditambahkan')
 }
 
 // ── Riwayat resep kunjungan ini ──────────────────────────────
@@ -711,11 +778,11 @@ onMounted(() => {
         <div class="toolbar__left">
           <i class="pi pi-list-check" />
           <span>Daftar Item Terapi</span>
-          <Tag :value="`${selectedObatObatan.length} item`" severity="secondary" />
+          <Tag :value="`${jumlahItem} item`" severity="secondary" />
         </div>
         <div class="toolbar__right">
           <Button icon="pi pi-search" label="Tambah Obat" size="small" severity="success" @click="listObat = true" />
-          <Button icon="pi pi-plus-circle" label="Obat Racikan" size="small" severity="help" @click="showResepRacikan = true" />
+          <Button icon="pi pi-plus-circle" label="Obat Racikan" size="small" severity="help" @click="bukaRacikanBaru" />
           <Button icon="pi pi-bookmark" label="Template Obat" size="small" severity="secondary" @click="bukaTemplateDialog" />
         </div>
       </div>
@@ -737,7 +804,7 @@ onMounted(() => {
               {{ data.NAMA }} 
             </div>
             <span v-if="!_isRacikan(data)" class="obat-barcode">{{ data.BARCODE }}</span>
-            <span v-else-if="_isRacikanParent(data)" class="racikan-label">Racikan</span>
+            <span v-else-if="_isRacikanParent(data)" class="racikan-label">Racikan · {{ bahanRacikan(data).length }} bahan</span>
           </template>
         </Column>
 
@@ -749,19 +816,27 @@ onMounted(() => {
 
         <Column field="QTY" header="Qty" style="width: 90px">
           <template #body="{ data }">
-            <InputText v-if="data.JENIS_R === 'R/'" type="number" v-model="data.QTY" min="0" fluid @update:modelValue="(v) => (data.QTY = Math.max(0, Number(v || 0)))" />
+            <!-- Jumlah racikan & bahannya diubah lewat tombol edit supaya keduanya tetap selaras -->
+            <strong v-if="_isRacikanParent(data)">{{ data.QTY }}</strong>
+            <span v-else-if="_isRacikanChild(data)" class="muted">{{ Number(data.QTY) > 0 ? data.QTY : '—' }}</span>
+            <InputText v-else-if="data.JENIS_R === 'R/'" type="number" v-model="data.QTY" min="0" fluid @update:modelValue="(v) => (data.QTY = Math.max(0, Number(v || 0)))" />
             <span v-else class="muted">—</span>
           </template>
         </Column>
 
         <Column field="SATUAN" header="Satuan" style="width: 76px">
-          <template #body="{ data }"><span v-if="data.JENIS_R">{{ data.SATUAN }}</span></template>
+          <template #body="{ data }">
+            <span v-if="_isRacikanChild(data)" class="muted">{{ Number(data.QTY) > 0 ? data.SATUAN : '' }}</span>
+            <span v-else-if="data.JENIS_R">{{ data.SATUAN }}</span>
+          </template>
         </Column>
 
         <Column field="REMARK_ITEM" header="Cara Pakai" style="min-width: 200px">
           <template #body="{ data, index }">
-            <div class="cara-pakai-cell">
-              <Button icon="pi pi-sliders-h" severity="info" text rounded size="small" v-tooltip.top="'Signa & dosis'" @click="bukaSignaDialog(index)" />
+            <!-- Bahan racikan tidak punya cara pakai sendiri: yang tampil adalah dosis per satuan racikan -->
+            <span v-if="_isRacikanChild(data)" class="muted small">{{ data.REMARK_ITEM || '—' }}</span>
+            <div v-else class="cara-pakai-cell">
+              <Button v-if="!_isRacikanParent(data)" icon="pi pi-sliders-h" severity="info" text rounded size="small" v-tooltip.top="'Signa & dosis'" @click="bukaSignaDialog(index)" />
               <Button icon="pi pi-book" severity="warn" text rounded size="small" v-tooltip.top="'Pilih cara pakai'" @click="openCaraPakaiDialog(index)" />
               <InputText v-model="data.REMARK_ITEM" placeholder="Cara pakai…" fluid />
             </div>
@@ -769,12 +844,17 @@ onMounted(() => {
         </Column>
 
         <Column field="HARGA" header="Subtotal" style="width: 130px; text-align: right">
-          <template #body="{ data }"><span class="price">{{ formatCurrency(data.HARGA * data.QTY) }}</span></template>
+          <template #body="{ data }">
+            <span class="price" :class="{ muted: _isRacikanChild(data) }">{{ formatCurrency(subtotalBaris(data)) }}</span>
+          </template>
         </Column>
 
-        <Column style="width: 48px; text-align: center">
-          <template #body="{ index }">
-            <Button icon="pi pi-times" severity="danger" text rounded size="small" v-tooltip.left="'Hapus item'" @click="confirmRemoveItemObat(index)" />
+        <Column style="width: 88px; text-align: right">
+          <template #body="{ data, index }">
+            <template v-if="!_isRacikanChild(data)">
+              <Button v-if="_isRacikanParent(data)" icon="pi pi-pencil" severity="secondary" text rounded size="small" v-tooltip.left="'Edit racikan'" @click="editRacikan(data)" />
+              <Button icon="pi pi-times" severity="danger" text rounded size="small" v-tooltip.left="_isRacikanParent(data) ? 'Hapus racikan' : 'Hapus item'" @click="confirmRemoveItemObat(index)" />
+            </template>
           </template>
         </Column>
       </DataTable>
@@ -783,7 +863,7 @@ onMounted(() => {
         <div class="footer__info">
           <span>Total Resep</span>
           <strong>{{ formatCurrency(totalAmount) }}</strong>
-          <span class="muted">· {{ selectedObatObatan.length }} item</span>
+          <span class="muted">· {{ jumlahItem }} item</span>
         </div>
         <div class="footer__actions">
           <Button label="Hapus Semua" icon="pi pi-trash" size="small" severity="danger" outlined :disabled="!selectedObatObatan.length" @click="clearAllItems" />
@@ -965,30 +1045,82 @@ onMounted(() => {
     </Dialog>
 
     <!-- ══ Dialog: Resep Racikan ══ -->
-    <Dialog v-model:visible="showResepRacikan" modal header="Tambah Resep Racikan" :style="{ width: '560px' }" @hide="resetRacikanForm">
+    <Dialog
+      v-model:visible="showResepRacikan"
+      modal
+      :header="racikanEditGroup ? 'Edit Resep Racikan' : 'Tambah Resep Racikan'"
+      :style="{ width: '820px', maxWidth: '96vw' }"
+      @hide="resetRacikanForm"
+    >
       <div class="racikan-form">
         <div class="racikan-form__hdr">
-          <div class="field" style="flex: 2"><label>Nama Racikan <span class="req">*</span></label><InputText v-model="TitleRacikan" placeholder="Cth: Puyer Batuk" fluid /></div>
-          <div class="field"><label>Jumlah</label><InputText type="number" v-model="jumlQtyResepRacikan" fluid @input="handleQuantityInput" /></div>
-          <div class="field"><label>Satuan</label><InputText v-model="SatuanRacikan" placeholder="Bungkus" fluid /></div>
+          <div class="field" style="flex: 2"><label for="rc-nama">Nama Racikan <span class="req">*</span></label><InputText id="rc-nama" v-model="racikanForm.nama" placeholder="Cth: Puyer Batuk" fluid autofocus /></div>
+          <div class="field"><label for="rc-qty">Jumlah <span class="req">*</span></label><InputNumber inputId="rc-qty" v-model="racikanForm.qty" :min="1" placeholder="10" fluid /></div>
+          <div class="field"><label for="rc-satuan">Satuan</label><Select inputId="rc-satuan" v-model="racikanForm.satuan" :options="SATUAN_RACIKAN" editable placeholder="Bungkus" fluid /></div>
+        </div>
+
+        <div class="field">
+          <div class="field__label-row">
+            <label for="rc-pakai">Aturan Pakai</label>
+            <Button icon="pi pi-book" label="Pilih preset" text size="small" @click="bukaCaraPakaiUntuk('racikan')" />
+          </div>
+          <InputText id="rc-pakai" v-model="racikanForm.caraPakai" placeholder="Cth: 3 x 1 bungkus, sesudah makan" fluid />
         </div>
 
         <div class="racikan-form__items-hdr">
           <span><i class="pi pi-list" /> Komposisi Racikan</span>
-          <Button icon="pi pi-plus" label="Tambah Item" size="small" severity="success" outlined @click="addItemRacik" />
+          <Button icon="pi pi-plus" label="Tambah Bahan" size="small" severity="success" outlined @click="racikanForm.bahan.push(bahanKosong())" />
         </div>
         <div class="racikan-form__items">
-          <p v-if="!itemResepRacikan.length" class="muted small">Belum ada item — klik Tambah Item</p>
-          <div v-for="(data, index) in itemResepRacikan" :key="index" class="racikan-row">
+          <p v-if="!racikanForm.bahan.length" class="muted small">Belum ada bahan — klik Tambah Bahan</p>
+          <div v-else class="racikan-row racikan-row--hdr" aria-hidden="true">
+            <span />
+            <span>Bahan / obat</span>
+            <span>Dosis per {{ (racikanForm.satuan || 'satuan').toLowerCase() }}</span>
+            <span>Jumlah total</span>
+            <span />
+          </div>
+          <div v-for="(b, index) in racikanForm.bahan" :key="index" class="racikan-row">
             <span class="racikan-row__no">{{ index + 1 }}</span>
-            <InputText v-model="data.NAMABARANG" placeholder="Nama bahan/obat…" fluid />
-            <Button icon="pi pi-times" severity="danger" text rounded size="small" @click="removeItemRacikan(index)" />
+            <div class="racikan-row__bahan">
+              <AutoComplete
+                v-model="b.obat"
+                :suggestions="saranBahan"
+                optionLabel="CAPTION"
+                :minLength="3"
+                :delay="350"
+                placeholder="Cari obat (min. 3 huruf) atau ketik nama bahan"
+                :aria-label="`Bahan ${index + 1}`"
+                fluid
+                @complete="cariBahan"
+              >
+                <template #option="{ option }">
+                  <div class="bahan-opsi">
+                    <span>{{ option.CAPTION }}</span>
+                    <small class="muted">{{ option.SATUAN || option.SATUAN_KECIL }} · stok {{ Math.max(0, Number(option.QUNATITY) || 0) }}</small>
+                  </div>
+                </template>
+              </AutoComplete>
+              <small v-if="bahanDariMaster(b)" class="racikan-row__info" :class="{ 'racikan-row__info--kurang': (Number(b.qty) || 0) > stokBahan(b) }">
+                Stok {{ stokBahan(b) }} {{ satuanBahan(b) }}<template v-if="hargaBahan(b) > 0"> · {{ formatCurrency(hargaBahan(b)) }}</template>
+                <template v-if="(Number(b.qty) || 0) > stokBahan(b)"> · stok tidak cukup</template>
+              </small>
+              <small v-else-if="namaBahan(b)" class="racikan-row__info">Bahan di luar master obat — tidak memotong stok</small>
+            </div>
+            <InputText v-model="b.dosis" placeholder="Cth: 100 mg / ½ tab" :aria-label="`Dosis bahan ${index + 1}`" fluid />
+            <InputGroup>
+              <InputNumber v-model="b.qty" :min="0" :disabled="!bahanDariMaster(b)" :placeholder="bahanDariMaster(b) ? '0' : '—'" :aria-label="`Jumlah total bahan ${index + 1}`" />
+              <InputGroupAddon v-if="satuanBahan(b)">{{ satuanBahan(b) }}</InputGroupAddon>
+            </InputGroup>
+            <Button icon="pi pi-times" severity="danger" text rounded size="small" :aria-label="`Hapus bahan ${index + 1}`" @click="racikanForm.bahan.splice(index, 1)" />
           </div>
         </div>
+
+        <p v-if="estimasiRacikan > 0" class="racikan-form__total">Perkiraan harga bahan <strong>{{ formatCurrency(estimasiRacikan) }}</strong></p>
       </div>
       <template #footer>
         <Button label="Batal" icon="pi pi-times" severity="secondary" outlined @click="showResepRacikan = false" />
-        <Button label="Simpan Racikan" icon="pi pi-save" @click="simpanRacikan" />
+        <Button :label="racikanEditGroup ? 'Simpan Perubahan' : 'Simpan Racikan'" icon="pi pi-save" @click="simpanRacikan" />
       </template>
     </Dialog>
 
@@ -1404,17 +1536,67 @@ onMounted(() => {
 }
 .racikan-form__items {
   display: grid;
-  gap: 0.375rem;
+  gap: 0.5rem;
+}
+.racikan-form__total {
+  margin: 0;
+  text-align: right;
+  font-size: 0.875rem;
 }
 .racikan-row {
   display: grid;
-  grid-template-columns: 1.25rem minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: 1.25rem minmax(0, 1fr) 10rem 9.5rem 2rem;
+  align-items: start;
   gap: 0.5rem;
+}
+.racikan-row--hdr {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--app-text-muted);
 }
 .racikan-row__no {
   color: var(--app-text-muted);
   font-size: 0.8125rem;
+  line-height: 2.25rem;
+}
+.racikan-row__bahan {
+  display: grid;
+  gap: 0.125rem;
+  min-width: 0;
+}
+.racikan-row__info {
+  font-size: 0.75rem;
+  color: var(--app-text-muted);
+}
+.racikan-row__info--kurang {
+  color: var(--p-red-500);
+}
+.racikan-row :deep(.p-inputnumber-input) {
+  width: 100%;
+  min-width: 0;
+}
+.bahan-opsi {
+  display: grid;
+}
+
+@media (max-width: 700px) {
+  .racikan-form__hdr {
+    flex-direction: column;
+  }
+  .racikan-row--hdr {
+    display: none;
+  }
+  .racikan-row {
+    grid-template-columns: 1.25rem minmax(0, 1fr) 2rem;
+  }
+  .racikan-row > :nth-child(3),
+  .racikan-row > :nth-child(4) {
+    grid-column: 2;
+  }
+  .racikan-row > :nth-child(5) {
+    grid-row: 1;
+    grid-column: 3;
+  }
 }
 
 /* Template */

@@ -23,8 +23,7 @@ const today = new Intl.DateTimeFormat('id-ID', {
 
 const userMenu = ref()
 const userMenuItems = [
-  { label: 'Profil saya', icon: 'pi pi-user', command: () => router.push('/pengaturan') },
-  { label: 'Ganti unit', icon: 'pi pi-building' },
+  { label: 'Ganti password', icon: 'pi pi-lock', command: () => router.push('/ganti-password') },
   { separator: true },
   { label: 'Keluar', icon: 'pi pi-sign-out', command: confirmLogout }
 ]

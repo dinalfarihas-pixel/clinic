@@ -21,6 +21,8 @@ const loading = ref(true)
 const saving = ref(false)
 const header = ref(null)
 const items = ref([])
+const racikanInduk = ref([])
+const obatList = ref([])
 const obatByBarcode = ref(new Map())
 
 const isSelesai = computed(() => header.value?.STATUS_PROGRESS === 'C')
@@ -43,13 +45,15 @@ function petakanItem(raw) {
 async function muat() {
   loading.value = true
   try {
-    const [obatList, detail] = await Promise.all([
+    const [daftarObat, detail] = await Promise.all([
       getDaftarObat(),
       getDetailResep(trans, { tanggal: route.query.tanggal, nomr: route.query.nomr, noregister: route.query.noregister })
     ])
-    obatByBarcode.value = new Map(obatList.map((o) => [o.IDBARANG, o]))
+    obatList.value = daftarObat
+    obatByBarcode.value = new Map(daftarObat.map((o) => [o.IDBARANG, o]))
     header.value = detail.header
     items.value = detail.items.map(petakanItem)
+    racikanInduk.value = detail.racikan
     if (!header.value) {
       toast.add({ severity: 'warn', summary: 'Resep tidak ditemukan', detail: trans, life: 5000 })
     }
@@ -73,6 +77,71 @@ function statusItemSeverity(item) {
   if (diberikan <= 0) return 'danger'
   if (diberikan < diminta) return 'warn'
   return 'success'
+}
+
+// ── Racikan ──────────────────────────────────────────────────
+// Bahan racikan yang diketik bebas oleh dokter tersimpan dengan barcode 00000 (tanpa stok).
+// Supaya bisa diberikan & memotong stok, apoteker mencocokkannya dengan sediaan di apotek:
+// BARCODE/NAMABARANG diganti sediaan terpilih, ketikan dokter tetap ada di BARCODE_REQ/NAMABARANG_REQ.
+const BARCODE_BEBAS = '00000'
+const isBebas = (item) => String(item.BARCODE ?? '').trim() === BARCODE_BEBAS
+const isDicocokkan = (item) => String(item.BARCODE_REQ ?? '').trim() === BARCODE_BEBAS && !isBebas(item)
+const jumlahBelumCocok = computed(() => items.value.filter(isBebas).length)
+
+// Baris tabel: judul racikan disisipkan di atas bahan-bahannya (urut ITEMSEQNO). Bahan = baris
+// ber-JENIS_R kosong sesudah induk, sampai bertemu item resep biasa (JENIS_R 'R/') berikutnya.
+const barisTampil = computed(() => {
+  const semua = [
+    ...racikanInduk.value.map((data) => ({ induk: true, data })),
+    ...items.value.map((data) => ({ induk: false, data }))
+  ].sort((a, b) => Number(a.data.ITEMSEQNO) - Number(b.data.ITEMSEQNO))
+  let induk = null
+  return semua.map((baris) => {
+    if (baris.induk) induk = baris.data
+    else if (baris.data.JENIS_R) induk = null
+    return { ...baris, racikan: baris.induk ? null : induk }
+  })
+})
+const racikanDari = (item) => barisTampil.value.find((b) => b.data === item)?.racikan || null
+const ringkasRacikan = (r) => [r.NAMABARANG, [r.QTY, r.MEREK].filter(Boolean).join(' ')].filter(Boolean).join(' · ')
+
+const cocokDialog = ref({ visible: false, item: null, keyword: '', pilih: null })
+
+function bukaCocokDialog(item) {
+  // Kata kunci awal: kata pertama ketikan dokter (tanpa dosis), mis. "Ambroxol 30mg" -> "Ambroxol"
+  const kata = String(item.NAMABARANG_REQ || item.NAMABARANG || '').match(/[A-Za-z]{3,}/)
+  cocokDialog.value = { visible: true, item, keyword: kata ? kata[0] : '', pilih: null }
+}
+
+const sediaanCocok = computed(() => {
+  const kata = cocokDialog.value.keyword.toLowerCase().split(/\s+/).filter(Boolean)
+  if (!kata.length) return []
+  return obatList.value
+    .filter((o) => {
+      const teks = `${o.NAMA || ''} ${o.GROUPING || ''} ${o.IDBARANG || ''}`.toLowerCase()
+      return kata.every((k) => teks.includes(k))
+    })
+    .slice(0, 50)
+})
+
+function konfirmasiCocok() {
+  const { item, pilih } = cocokDialog.value
+  if (!item || !pilih) return
+  item.BARCODE_REQ = BARCODE_BEBAS
+  item.NAMABARANG_REQ = item.NAMABARANG_REQ || item.NAMABARANG
+  item.BARCODE = pilih.IDBARANG
+  item.NAMABARANG = pilih.NAMA
+  item.MEREK = pilih.SATUAN_KECIL || ''
+  // Batch lama (bila ada) milik sediaan sebelumnya; stoknya dikembalikan backend saat disimpan
+  item._batch = null
+  item.JSON_FILE = ''
+  item.QTY = 0
+  item.HARGA = 0
+  item.HARGABELI = 0
+  item.TOTALAMOUNT = 0
+  item.CHANGING_ITEM = 1
+  cocokDialog.value.visible = false
+  bukaBatchDialog(item)
 }
 
 // ── Dialog pilih batch stok ────────────────────────────────────
@@ -99,6 +168,11 @@ async function bukaBatchDialog(item) {
 
 function pilihBaris(row) {
   batchDialog.value.pilih = row
+  // Bahan ketikan bebas tidak punya jumlah diminta: apoteker mengisi sendiri sesuai dosis racikan
+  if (!(Number(batchDialog.value.item?.QTY_REQ) > 0)) {
+    batchDialog.value.qty = null
+    return
+  }
   const sisaDiminta = Math.max((Number(batchDialog.value.item?.QTY_REQ) || 0) - (Number(batchDialog.value.item?.QTY) || 0), 0)
   batchDialog.value.qty = Math.min(sisaDiminta || Number(row.QTY) || 1, Number(row.QTY) || 0) || null
 }
@@ -286,7 +360,9 @@ function simpanLanjutkanNanti() {
 function konfirmasiSelesaikan() {
   confirm.require({
     header: 'Selesaikan resep?',
-    message: 'Resep akan ditandai selesai. Item yang belum dipilih batchnya akan dianggap tidak diberikan.',
+    message:
+      'Resep akan ditandai selesai. Item yang belum dipilih batchnya akan dianggap tidak diberikan.' +
+      (jumlahBelumCocok.value ? ` Masih ada ${jumlahBelumCocok.value} bahan racikan yang belum dicocokkan dengan sediaan apotek.` : ''),
     icon: 'pi pi-check-circle',
     acceptLabel: 'Selesaikan',
     rejectLabel: 'Batal',
@@ -377,32 +453,64 @@ onMounted(muat)
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in items" :key="item.ITEMSEQNO">
-              <td>
-                <span class="strong">{{ item.NAMABARANG }}</span>
-                <small v-if="item.NAMABARANG_REQ && item.NAMABARANG_REQ !== item.NAMABARANG" class="sub">Diminta: {{ item.NAMABARANG_REQ }}</small>
-              </td>
-              <td class="mono" style="text-align: center">{{ item.QTY_REQ }} {{ item.MEREK }}</td>
-              <td class="mono strong" style="text-align: center">{{ item.QTY }}</td>
-              <td>
-                <template v-if="item._batch">
-                  <span class="mono">{{ item._batch.BATCH_NUMBER || '—' }}</span>
-                  <small v-if="item._batch.TGL_EXPIRED" class="sub">Exp. {{ formatTanggal(item._batch.TGL_EXPIRED) }}</small>
-                </template>
-                <span v-else class="belum-dipilih">Belum dipilih</span>
-              </td>
-              <td class="mono" style="text-align: right">{{ item.HARGA ? rupiah.format(item.HARGA) : '—' }}</td>
-              <td class="mono strong" style="text-align: right">{{ item.TOTALAMOUNT ? rupiah.format(item.TOTALAMOUNT) : '—' }}</td>
-              <td style="text-align: center">
-                <Tag :value="`${item.QTY}/${item.QTY_REQ}`" :severity="statusItemSeverity(item)" />
-              </td>
-              <td v-if="!readOnly" style="text-align: center">
-                <div class="actions">
-                  <Button :label="item._batch ? 'Ubah' : 'Pilih batch'" size="small" text @click="bukaBatchDialog(item)" />
-                  <Button icon="pi pi-trash" text rounded severity="danger" size="small" aria-label="Hapus item" v-tooltip.top="'Hapus item (refund)'" @click="bukaHapusItem(item)" />
-                </div>
-              </td>
-            </tr>
+            <template v-for="{ induk, data: item, racikan } in barisTampil" :key="item.ITEMSEQNO">
+              <!-- Judul racikan: bukan stok, hanya konteks untuk bahan di bawahnya -->
+              <tr v-if="induk" class="racikan-hdr">
+                <td :colspan="readOnly ? 7 : 8">
+                  <i class="pi pi-list" />
+                  <span class="strong">Racikan: {{ item.NAMABARANG }}</span>
+                  <span v-if="item.QTY" class="racikan-hdr__qty">{{ item.QTY }} {{ item.MEREK }}</span>
+                  <span v-if="item.REMARK_ITEM" class="racikan-hdr__pakai">Aturan pakai: {{ item.REMARK_ITEM }}</span>
+                </td>
+              </tr>
+              <tr v-else :class="{ 'racikan-bahan': racikan }">
+                <td>
+                  <span class="strong">{{ item.NAMABARANG }}</span>
+                  <Tag v-if="isBebas(item)" value="Belum dicocokkan" severity="warn" class="tag-cocok" />
+                  <small v-if="item.NAMABARANG_REQ && item.NAMABARANG_REQ !== item.NAMABARANG" class="sub">
+                    {{ isDicocokkan(item) ? 'Ketikan dokter' : 'Diminta' }}: {{ item.NAMABARANG_REQ }}
+                  </small>
+                  <small v-if="racikan && item.REMARK_ITEM" class="sub">Dosis: {{ item.REMARK_ITEM }}</small>
+                </td>
+                <td class="mono" style="text-align: center">
+                  <template v-if="Number(item.QTY_REQ) > 0">{{ item.QTY_REQ }} {{ item.MEREK }}</template>
+                  <template v-else>—</template>
+                </td>
+                <td class="mono strong" style="text-align: center">{{ item.QTY }}</td>
+                <td>
+                  <template v-if="item._batch">
+                    <span class="mono">{{ item._batch.BATCH_NUMBER || '—' }}</span>
+                    <small v-if="item._batch.TGL_EXPIRED" class="sub">Exp. {{ formatTanggal(item._batch.TGL_EXPIRED) }}</small>
+                  </template>
+                  <span v-else class="belum-dipilih">{{ isBebas(item) ? 'Cocokkan dulu' : 'Belum dipilih' }}</span>
+                </td>
+                <td class="mono" style="text-align: right">{{ item.HARGA ? rupiah.format(item.HARGA) : '—' }}</td>
+                <td class="mono strong" style="text-align: right">{{ item.TOTALAMOUNT ? rupiah.format(item.TOTALAMOUNT) : '—' }}</td>
+                <td style="text-align: center">
+                  <Tag :value="Number(item.QTY_REQ) > 0 ? `${item.QTY}/${item.QTY_REQ}` : String(item.QTY)" :severity="statusItemSeverity(item)" />
+                </td>
+                <td v-if="!readOnly" style="text-align: center">
+                  <div class="actions">
+                    <Button v-if="isBebas(item)" label="Cocokkan" icon="pi pi-link" size="small" text @click="bukaCocokDialog(item)" />
+                    <template v-else>
+                      <Button :label="item._batch ? 'Ubah' : 'Pilih batch'" size="small" text @click="bukaBatchDialog(item)" />
+                      <Button
+                        v-if="isDicocokkan(item)"
+                        icon="pi pi-link"
+                        text
+                        rounded
+                        severity="secondary"
+                        size="small"
+                        aria-label="Ganti sediaan"
+                        v-tooltip.top="'Ganti sediaan yang dicocokkan'"
+                        @click="bukaCocokDialog(item)"
+                      />
+                    </template>
+                    <Button icon="pi pi-trash" text rounded severity="danger" size="small" aria-label="Hapus item" v-tooltip.top="'Hapus item (refund)'" @click="bukaHapusItem(item)" />
+                  </div>
+                </td>
+              </tr>
+            </template>
             <tr v-if="!items.length">
               <td :colspan="readOnly ? 7 : 8" class="empty">Tidak ada item pada resep ini.</td>
             </tr>
@@ -426,7 +534,12 @@ onMounted(muat)
     <!-- Dialog pilih batch stok -->
     <Dialog v-model:visible="batchDialog.visible" header="Pilih batch stok" modal :style="{ width: '40rem', maxWidth: '96vw' }">
       <p v-if="batchDialog.item" class="dialog-sub">
-        <strong>{{ batchDialog.item.NAMABARANG }}</strong> · diminta {{ batchDialog.item.QTY_REQ }} {{ batchDialog.item.MEREK }}
+        <strong>{{ batchDialog.item.NAMABARANG }}</strong>
+        <template v-if="Number(batchDialog.item.QTY_REQ) > 0"> · diminta {{ batchDialog.item.QTY_REQ }} {{ batchDialog.item.MEREK }}</template>
+        <template v-else> · jumlah tidak ditentukan dokter, isi sesuai kebutuhan racikan</template>
+      </p>
+      <p v-if="batchDialog.item && racikanDari(batchDialog.item)" class="dialog-sub">
+        Racikan {{ ringkasRacikan(racikanDari(batchDialog.item)) }}<template v-if="batchDialog.item.REMARK_ITEM"> · dosis {{ batchDialog.item.REMARK_ITEM }}</template>
       </p>
       <p v-if="batchDialog.loading" class="empty"><i class="pi pi-spin pi-spinner" /> Memuat stok...</p>
       <template v-else>
@@ -467,6 +580,61 @@ onMounted(muat)
       <template #footer>
         <Button label="Batal" severity="secondary" outlined @click="batchDialog.visible = false" />
         <Button label="Pilih" icon="pi pi-check" :disabled="!batchDialog.pilih" @click="konfirmasiBatch" />
+      </template>
+    </Dialog>
+
+    <!-- Dialog cocokkan ketikan dokter dengan sediaan apotek -->
+    <Dialog v-model:visible="cocokDialog.visible" header="Cocokkan dengan sediaan apotek" modal :style="{ width: '44rem', maxWidth: '96vw' }">
+      <template v-if="cocokDialog.item">
+        <div class="cocok-asal">
+          <span class="cocok-asal__label">Ketikan dokter</span>
+          <strong>{{ cocokDialog.item.NAMABARANG_REQ || cocokDialog.item.NAMABARANG }}</strong>
+          <small v-if="racikanDari(cocokDialog.item)" class="sub">
+            Racikan {{ ringkasRacikan(racikanDari(cocokDialog.item)) }}<template v-if="cocokDialog.item.REMARK_ITEM"> · dosis {{ cocokDialog.item.REMARK_ITEM }}</template>
+          </small>
+        </div>
+
+        <IconField>
+          <InputIcon class="pi pi-search" />
+          <InputText v-model="cocokDialog.keyword" placeholder="Cari nama sediaan, zat aktif, atau kode" aria-label="Cari sediaan" autofocus fluid />
+        </IconField>
+
+        <p v-if="!cocokDialog.keyword.trim()" class="empty">Ketik nama sediaan untuk mencari.</p>
+        <p v-else-if="!sediaanCocok.length" class="empty">Tidak ada sediaan yang cocok. Coba kata kunci lain.</p>
+        <div v-else class="cocok-list">
+          <table class="batch-table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Sediaan</th>
+                <th style="text-align: center">Stok</th>
+                <th style="text-align: right">Harga jual</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="o in sediaanCocok"
+                :key="o.IDBARANG"
+                class="batch-row"
+                :class="{ 'batch-row--selected': cocokDialog.pilih === o }"
+                @click="cocokDialog.pilih = o"
+              >
+                <td><RadioButton :modelValue="cocokDialog.pilih" :value="o" @update:modelValue="cocokDialog.pilih = o" /></td>
+                <td>
+                  <span class="strong">{{ o.NAMA }}</span>
+                  <small class="sub mono">{{ o.IDBARANG }}<template v-if="o.GROUPING"> · {{ o.GROUPING }}</template></small>
+                </td>
+                <td class="mono" style="text-align: center">{{ Number(o.TOTAL_STOCK) || 0 }} {{ o.SATUAN_KECIL }}</td>
+                <td class="mono" style="text-align: right">{{ rupiah.format(o.HARGAJUAL || 0) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
+
+      <template #footer>
+        <Button label="Batal" severity="secondary" outlined @click="cocokDialog.visible = false" />
+        <Button label="Cocokkan & pilih batch" icon="pi pi-link" :disabled="!cocokDialog.pilih" @click="konfirmasiCocok" />
       </template>
     </Dialog>
 
@@ -557,6 +725,41 @@ onMounted(muat)
   display: block;
   font-size: 0.75rem;
   color: var(--app-text-muted);
+}
+.racikan-hdr td {
+  background: color-mix(in srgb, var(--p-primary-color) 6%, transparent);
+}
+.racikan-hdr i {
+  margin-right: 0.375rem;
+  color: var(--p-primary-color);
+}
+.racikan-hdr__qty,
+.racikan-hdr__pakai {
+  margin-left: 0.75rem;
+  color: var(--app-text-muted);
+}
+.racikan-bahan td:first-child {
+  padding-left: 1.75rem;
+}
+.tag-cocok {
+  margin-left: 0.375rem;
+  font-size: 0.6875rem;
+}
+.cocok-asal {
+  margin-bottom: 0.875rem;
+  padding: 0.625rem 0.75rem;
+  border: 1px dashed var(--app-border);
+  border-radius: var(--app-radius);
+}
+.cocok-asal__label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--app-text-muted);
+}
+.cocok-list {
+  max-height: 20rem;
+  margin-top: 0.75rem;
+  overflow-y: auto;
 }
 .belum-dipilih {
   font-size: 0.8125rem;

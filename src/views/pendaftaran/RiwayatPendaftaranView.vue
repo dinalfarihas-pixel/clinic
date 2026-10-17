@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useToast } from 'primevue/usetoast'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { getRiwayatPendaftaran, batalPendaftaran, getUrlCetakSep, CARA_BAYAR_BPJS } from '@/services/pendaftaran'
+import { getRiwayatPendaftaran, batalPendaftaran, CARA_BAYAR_BPJS } from '@/services/pendaftaran'
 import { toYmd } from '@/utils/tanggal'
 
 const toast = useToast()
@@ -107,9 +107,7 @@ const ringkasan = computed(() => {
 
 const usia = (u) => (u ? `${u.tahun ?? 0} th ${u.bulan ?? 0} bl` : '')
 
-// ── Cetak SEP / bukti pendaftaran ────────────────────────────
-const printing = ref(null) // NOPENDAFTARAN yang sedang dicetak
-
+// ── Cetak bukti pendaftaran ──────────────────────────────────
 function cetakBukti(row) {
   const href = router.resolve({
     name: 'cetak-bukti-pendaftaran',
@@ -117,29 +115,6 @@ function cetakBukti(row) {
     query: { print: '1' }
   }).href
   window.open(href, '_blank')
-}
-
-// BPJS: SEP dari API Laravel; lainnya: bukti pendaftaran klinik
-async function cetak(row) {
-  if (!isBpjsRow(row)) return cetakBukti(row)
-  // Jendela dibuka saat klik agar tidak diblokir popup blocker
-  const win = window.open('', '_blank')
-  printing.value = row.NOPENDAFTARAN
-  try {
-    const url = await getUrlCetakSep({
-      noSep: isBpjsRow(row) ? row.NOSEP : '',
-      noReg: row.NOPENDAFTARAN,
-      norm: row.NOMR,
-      caraBayar: row.KODECARABAYAR
-    })
-    if (win) win.location.href = url
-    else window.open(url, '_blank')
-  } catch (err) {
-    win?.close()
-    toast.add({ severity: 'error', summary: 'Gagal mencetak', detail: err.message, life: 5000 })
-  } finally {
-    printing.value = null
-  }
 }
 
 // ── Cetak gelang pasien (5 x 2 cm), sama dengan SIMRS ────────
@@ -193,6 +168,12 @@ const menuItems = computed(() => [
     icon: 'pi pi-file',
     disabled: !menuRow.value || isBatal(menuRow.value),
     command: () => cetakBukti(menuRow.value)
+  },
+  {
+    label: 'Rekam medis elektronik',
+    icon: 'pi pi-file-edit',
+    disabled: !menuRow.value || isBatal(menuRow.value),
+    command: () => window.open(router.resolve({ name: 'rekam-medis-preview', params: { noreg: menuRow.value.NOPENDAFTARAN } }).href, '_blank')
   },
   { label: 'Cetak gelang pasien', icon: 'pi pi-id-card', command: () => cetakGelang(menuRow.value) },
   { separator: true },
@@ -400,11 +381,10 @@ onMounted(muat)
                 rounded
                 severity="secondary"
                 size="small"
-                :loading="printing === r.NOPENDAFTARAN"
                 :disabled="isBatal(r)"
-                :aria-label="isBpjsRow(r) ? 'Cetak SEP' : 'Cetak bukti pendaftaran'"
-                v-tooltip.top="isBpjsRow(r) ? 'Cetak SEP' : 'Cetak bukti pendaftaran'"
-                @click="cetak(r)"
+                aria-label="Cetak bukti pendaftaran"
+                v-tooltip.top="'Cetak bukti pendaftaran'"
+                @click="cetakBukti(r)"
               />
               <Button
                 icon="pi pi-ellipsis-v"

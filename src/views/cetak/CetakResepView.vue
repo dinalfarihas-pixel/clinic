@@ -134,7 +134,7 @@ onBeforeUnmount(() => pageStyle?.remove())
       <header class="kop">
         <img v-if="auth.logo" :src="auth.logo" alt="" class="kop__logo" />
         <div class="kop__text">
-          <strong class="kop__nama">{{ auth.company || 'KLINIK' }}</strong>
+          <strong class="kop__nama">{{ auth.companyApotek || auth.company || 'APOTEK' }}</strong>
           <span v-if="auth.alamat" class="kop__alamat">{{ auth.alamat }}</span>
         </div>
       </header>
@@ -252,14 +252,32 @@ onBeforeUnmount(() => pageStyle?.remove())
 }
 .kop__text {
   display: flex;
+  flex: 1;
   flex-direction: column;
+  align-items: center;
+  text-align: center;
   line-height: 1.3;
+}
+/* Logo di kiri tanpa menggeser teks: teks kop tepat di tengah halaman (simetris dengan judul) */
+.kop {
+  position: relative;
+  justify-content: center;
+}
+.kop__logo {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.kop__text {
+  padding-inline: 16mm;
 }
 .kop__nama {
   font-size: 1.2em;
   text-transform: uppercase;
 }
 .kop__alamat {
+  white-space: pre-line;
   font-size: 0.85em;
   color: var(--ink-muted);
 }

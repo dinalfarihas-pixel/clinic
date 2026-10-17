@@ -21,7 +21,7 @@ const dokterTampil = computed(() => {
   const q = keyword.value.trim().toLowerCase()
   if (!q) return dokter.value
   return dokter.value.filter((d) =>
-    [d.NAMADOKTER, d.NIK, d.KODE_DOKTER_BPJS, d.NAMAPROFESI, namaPoli.value[d.KDPOLY_BPJS]]
+    [d.NAMADOKTER, d.NIK, d.NO_SIP, d.KODE_DOKTER_BPJS, d.NAMAPROFESI, namaPoli.value[d.KDPOLY_BPJS]]
       .some((v) => String(v ?? '').toLowerCase().includes(q))
   )
 })
@@ -45,7 +45,7 @@ const editKode = ref(null)
 const isEdit = computed(() => editKode.value !== null)
 
 function emptyForm() {
-  return { NAMADOKTER: '', NIK: '', KODE_DOKTER_BPJS: '', poli: null, profesi: PROFESI[0], NAMAPROFESI: '' }
+  return { NAMADOKTER: '', NIK: '', NO_SIP: '', KODE_DOKTER_BPJS: '', poli: null, profesi: PROFESI[0], NAMAPROFESI: '' }
 }
 const form = ref(emptyForm())
 
@@ -61,6 +61,7 @@ function bukaEdit(d) {
   form.value = {
     NAMADOKTER: d.NAMADOKTER || '',
     NIK: d.NIK || '',
+    NO_SIP: d.NO_SIP || '',
     KODE_DOKTER_BPJS: d.KODE_DOKTER_BPJS ? String(d.KODE_DOKTER_BPJS) : '',
     // Cocokkan poli lewat KDPOLY, lalu kode poli BPJS (data lama KDPOLY-nya berisi KDDOKTER)
     poli: poli.value.find((p) => p.kode == d.KDPOLY) || poli.value.find((p) => p.KodePoliBPJS === d.KDPOLY_BPJS) || null,
@@ -135,6 +136,7 @@ async function simpan() {
     const payload = {
       NAMADOKTER: f.NAMADOKTER.trim(),
       NIK: f.NIK.trim(),
+      NO_SIP: f.NO_SIP.trim(),
       KODE_DOKTER_BPJS: f.KODE_DOKTER_BPJS.trim(),
       KDPOLY: f.poli.kode,
       KDPOLY_BPJS: f.poli.KodePoliBPJS,
@@ -178,7 +180,7 @@ onMounted(muat)
       <header class="panel__header toolbar">
         <IconField class="toolbar__search">
           <InputIcon class="pi pi-search" />
-          <InputText v-model="keyword" placeholder="Cari nama, NIK, kode BPJS, atau poli" fluid />
+          <InputText v-model="keyword" placeholder="Cari nama, NIK, SIP, kode BPJS, atau poli" fluid />
         </IconField>
         <div class="toolbar__right">
           <span class="toolbar__count">{{ dokterTampil.length }} dokter</span>
@@ -210,6 +212,9 @@ onMounted(muat)
         </Column>
         <Column field="NIK" header="NIK" style="min-width: 10rem">
           <template #body="{ data }"><span class="mono">{{ data.NIK || '—' }}</span></template>
+        </Column>
+        <Column field="NO_SIP" header="No. SIP" sortable style="min-width: 10rem">
+          <template #body="{ data }"><span class="mono">{{ data.NO_SIP || '—' }}</span></template>
         </Column>
         <Column field="KODE_DOKTER_BPJS" header="Kode BPJS" sortable>
           <template #body="{ data }"><span class="mono">{{ data.KODE_DOKTER_BPJS || '—' }}</span></template>
@@ -292,6 +297,11 @@ onMounted(muat)
             @update:modelValue="clearError('NIK')"
           />
           <small v-if="errors.NIK" class="field__error">{{ errors.NIK }}</small>
+        </div>
+
+        <div class="field">
+          <label for="d-sip">No. SIP</label>
+          <InputText id="d-sip" v-model="form.NO_SIP" placeholder="Surat Izin Praktik (opsional)" fluid />
         </div>
 
         <div class="field">

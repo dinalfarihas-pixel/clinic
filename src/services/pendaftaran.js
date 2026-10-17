@@ -329,6 +329,13 @@ export async function searchDesa(query) {
   return Array.isArray(res) ? res : []
 }
 
+/** Data desa/kelurahan berdasarkan kode kelurahan (KDKELURAHAN pasien), untuk mode edit. */
+export async function getDesaById(idDesa) {
+  if (!idDesa) return null
+  const res = await http.post('/index.php/api/data_referensi/get_desa_v3', { mode: 3, nama_desa: idDesa })
+  return Array.isArray(res) && res.length ? res[0] : null
+}
+
 /** Cek peserta BPJS berdasarkan nomor kartu (endpoint v2, dipakai form pasien baru). */
 export async function getPesertaBpjsByNoka(noka) {
   const res = await http.post(`/index.php/api/Bpjs_api/get_data_peserta_v2/${noka}/${idClient()}`)

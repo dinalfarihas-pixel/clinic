@@ -208,8 +208,10 @@ async function panggil(p) {
 }
 
 // ── Periksa (isi SOAP) ───────────────────────────────────────
+// Dibuka di tab baru agar daftar pasien tetap tersedia. Sesi dibagi antar tab lewat localStorage.
 function periksa(p) {
-  router.push({ name: 'pemeriksaan', params: { noreg: p.NOPENDAFTARAN } })
+  const { href } = router.resolve({ name: 'pemeriksaan', params: { noreg: p.NOPENDAFTARAN } })
+  window.open(href, '_blank', 'noopener')
 }
 
 // ── Detail ───────────────────────────────────────────────────

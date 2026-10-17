@@ -12,7 +12,7 @@ export const PROFESI = [
 
 /**
  * Daftar dokter aktif (datadokterv3 mode 2).
- * Item: KDDOKTER, NAMADOKTER, KDPOLY_BPJS, KODE_DOKTER_BPJS, SUB_SP, NIK, NAMAPROFESI.
+ * Item: KDDOKTER, NAMADOKTER, KDPOLY_BPJS, KODE_DOKTER_BPJS, SUB_SP, NIK, NAMAPROFESI, NO_SIP.
  */
 export async function getDaftarDokter() {
   const res = await http.post('/index.php/api/data_referensi/datadokterv3', { id_client: getIdClient(), mode: 2 })
@@ -68,6 +68,7 @@ function payloadDokter(dokter) {
     KDPOLY_BPJS: dokter.KDPOLY_BPJS,
     KDPROFESI: dokter.KDPROFESI,
     NAMAPROFESI: dokter.NAMAPROFESI,
+    NO_SIP: dokter.NO_SIP,
     ID_CLIENT: getIdClient()
   }
 }

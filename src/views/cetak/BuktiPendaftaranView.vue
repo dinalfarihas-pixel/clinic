@@ -142,7 +142,7 @@ onBeforeUnmount(() => pageStyle?.remove())
     <!-- Kertas -->
     <article v-else-if="data" class="kertas">
       <header class="kop">
-        <img v-if="auth.logo" :src="auth.logo" alt="" class="kop__logo" />
+        <img v-if="auth.logoKlinik" :src="auth.logoKlinik" alt="" class="kop__logo" />
         <div class="kop__text">
           <strong class="kop__nama">{{ auth.company || 'KLINIK' }}</strong>
           <span v-if="auth.alamat" class="kop__alamat">{{ auth.alamat }}</span>
@@ -243,14 +243,49 @@ onBeforeUnmount(() => pageStyle?.remove())
 }
 .kop__text {
   display: flex;
+  flex: 1;
   flex-direction: column;
+  align-items: center;
+  text-align: center;
   line-height: 1.3;
+}
+/* Ukuran logo klinik (logo lebar): tinggi 14 mm, lebar menyesuaikan maks. 28 mm */
+.kop__logo,
+.cetak--a4 .kop__logo,
+.cetak--a5 .kop__logo {
+  width: auto;
+  height: 14mm;
+  max-width: 28mm;
+  object-fit: contain;
+  object-position: left center;
+}
+/* Logo di kiri tanpa menggeser teks: teks kop tepat di tengah halaman (simetris dengan judul) */
+.kop {
+  position: relative;
+  justify-content: center;
+}
+.kop__logo {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.kop__text {
+  padding-inline: 30mm;
+}
+.cetak--struk .kop__logo {
+  position: static;
+  transform: none;
+}
+.cetak--struk .kop__text {
+  padding-inline: 0;
 }
 .kop__nama {
   font-size: 1.2em;
   text-transform: uppercase;
 }
 .kop__alamat {
+  white-space: pre-line;
   font-size: 0.85em;
   color: var(--ink-muted);
 }
