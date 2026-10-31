@@ -53,7 +53,7 @@ export function teksDiskon(i) {
 export function payloadDariStruk(s, auth) {
   const items = s.items.filter((i) => !i.batal)
   return {
-    company: auth.company,
+    company: auth.companyApotek || auth.company,
     alamat: auth.alamat,
     receiptNo: s.RECEIPT_NO,
     waktu: s.TANGGAL,

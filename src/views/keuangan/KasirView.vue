@@ -224,6 +224,7 @@ async function simpanTambahItem() {
             <label for="tgl-awal">Dari tanggal</label>
             <DatePicker v-model="tglAwal" inputId="tgl-awal" dateFormat="dd/mm/yy" showIcon iconDisplay="input" :maxDate="tglAkhir || undefined" fluid />
           </div>
+          <span class="filter__sep">&ndash;</span>
           <div class="field">
             <label for="tgl-akhir">Sampai tanggal</label>
             <DatePicker v-model="tglAkhir" inputId="tgl-akhir" dateFormat="dd/mm/yy" showIcon iconDisplay="input" :minDate="tglAwal || undefined" fluid />
@@ -429,10 +430,23 @@ async function simpanTambahItem() {
   margin-bottom: 1.25rem;
 }
 .filter__row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
-  gap: 1rem;
-  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: flex-end;
+}
+.filter__row .field {
+  flex: 0 1 13rem;
+  min-width: 11rem;
+  margin-bottom: 0;
+}
+.filter__sep {
+  align-self: flex-end;
+  padding-bottom: 0.625rem;
+  color: var(--app-text-muted);
+}
+.filter__btn {
+  flex-shrink: 0;
 }
 .toolbar {
   flex-wrap: wrap;

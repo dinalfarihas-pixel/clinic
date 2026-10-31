@@ -428,7 +428,7 @@ async function doCheckout() {
       }))
     })
     sukses.value = {
-      company: auth.company,
+      company: auth.companyApotek || auth.company,
       alamat: auth.alamat,
       receiptNo: hasil.RECEIPT_NO,
       waktu: new Date().toISOString().slice(0, 10) + ' ' + new Date().toTimeString().slice(0, 8),
